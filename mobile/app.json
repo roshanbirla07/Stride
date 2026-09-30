@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "Stride",
+    "slug": "stride-pilot",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "stride",
+    "ios": {
+      "bundleIdentifier": "com.roshanbirla.stridepilot",
+      "supportsTablet": false
+    },
+    "android": {
+      "package": "com.roshanbirla.stridepilot"
+    },
+    "plugins": [
+      "expo-secure-store",
+      "react-native-health-connect",
+      ["@kingstinct/react-native-healthkit", {
+        "NSHealthShareUsageDescription": "Stride reads your steps to show challenge rankings.",
+        "NSHealthUpdateUsageDescription": "Stride does not write health data."
+      }],
+      ["expo-build-properties", {
+        "android": {"compileSdkVersion": 36, "targetSdkVersion": 36, "minSdkVersion": 26}
+      }]
+    ]
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "stride-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "expo start --dev-client",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "doctor": "expo-doctor"
+  },
+  "dependencies": {
+    "expo": "~57.0.9",
+    "react": "19.2.3",
+    "react-native": "0.86.2",
+    "expo-build-properties": "~57.0.0",
+    "expo-secure-store": "~57.0.0",
+    "react-native-health-connect": "^4.0.0",
+    "@kingstinct/react-native-healthkit": "^14.0.0",
+    "react-native-nitro-modules": "^0.35.0"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.0",
+    "typescript": "~5.9.0"
+  }
+}

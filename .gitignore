@@ -1,0 +1,11 @@
+.env
+*.sqlite3
+*.sqlite3-*
+__pycache__/
+node_modules/
+.expo/
+android/
+ios/
+dist/
+*.apk
+*.ipa
