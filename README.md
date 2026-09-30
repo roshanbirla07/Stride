@@ -20,7 +20,7 @@ cd server
 python3 app.py
 ```
 
-For a local end-to-end test, set the mobile `EXPO_PUBLIC_API_URL` to a reachable HTTPS reverse proxy for port 8000. Never expose the SQLite file or run the development server as a public production deployment. The file path is configurable via `STRIDE_DB`.
+For a local end-to-end test, enter the reachable HTTPS reverse proxy URL for port 8000 on the mobile sign-in screen. Never expose the SQLite file or run the development server as a public production deployment. The file path is configurable via `STRIDE_DB`.
 
 ```sh
 cd server
@@ -48,7 +48,7 @@ npx expo-doctor
 EXPO_PUBLIC_API_URL=https://your-api.example.com npx expo start --dev-client
 ```
 
-Add `EXPO_PUBLIC_API_URL=https://your-api.example.com` to your build environment and build a native binary after dependency changes. For Android, `npx eas build --platform android --profile pilot` creates an installable internal APK. For iOS, `npx eas build --platform ios --profile testflight`, then submit through App Store Connect and invite your testers via TestFlight. External TestFlight beta review may be required. Configure signing in EAS or Xcode.
+Enter your backend HTTPS URL on the first screen (or set `EXPO_PUBLIC_API_URL` as a build-time default). For Android, `npx eas build --platform android --profile pilot` creates an installable internal APK. For iOS, `npx eas build --platform ios --profile testflight`, then submit through App Store Connect and invite your testers via TestFlight. External TestFlight beta review may be required. Configure signing in EAS or Xcode.
 
 The app requests read-only steps, syncs the current day on demand, and attempts yesterday again during 00:00–00:29 IST when opened. It also resyncs when brought to foreground after the user connected. Phone background execution is not guaranteed at midnight. For this pilot, each participant should open the app before the cutoff; missing uploads remain unverified.
 

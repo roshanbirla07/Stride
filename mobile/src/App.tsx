@@ -1,7 +1,7 @@
 import React, {useCallback, useEffect, useState} from 'react';
 import {ActivityIndicator, AppState, Pressable, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, View} from 'react-native';
 import {authorize, readSteps, source} from './health';
-import {board, credentials, logout, savedUser, upload, Board} from './api';
+import {board, credentials, getApiUrl, setApiUrl, logout, savedUser, upload, Board} from './api';
 
 type Period = 'day'|'week'|'month';
 const pad=(n:number)=>String(n).padStart(2,'0');
@@ -18,6 +18,7 @@ export default function App(){
   const [user,setUser]=useState<{id:number;name:string;email:string}|null>(null);
   const [mode,setMode]=useState<'login'|'register'>('register');
   const [name,setName]=useState(''),[email,setEmail]=useState(''),[password,setPassword]=useState('');
+  const [apiUrl,setApiUrlInput]=useState('');
   const [period,setPeriod]=useState<Period>('day');
   const [data,setData]=useState<Board|null>(null);
   const [message,setMessage]=useState('Connect your steps to join the leaderboard');
@@ -26,7 +27,7 @@ export default function App(){
   const refresh=useCallback(async(p:Period=period)=>{
     if(user) setData(await board(p,dayString()));
   },[user,period]);
-  useEffect(()=>{savedUser().then(setUser).catch(()=>{});},[]);
+  useEffect(()=>{getApiUrl().then(setApiUrlInput).then(()=>savedUser().then(setUser)).catch(()=>{});},[]);
   useEffect(()=>{refresh().catch(e=>setMessage(e.message));},[refresh]);
 
   async function sync(){
@@ -57,7 +58,7 @@ export default function App(){
 
   async function signIn(){
     setBusy(true);
-    try{setUser(await credentials(name,email,password,mode));setMessage('Connect your steps to join the leaderboard');}
+    try{await setApiUrl(apiUrl);setUser(await credentials(name,email,password,mode));setMessage('Connect your steps to join the leaderboard');}
     catch(e){setMessage(e instanceof Error?e.message:'Sign in failed');}
     finally{setBusy(false);}
   }
@@ -66,6 +67,7 @@ export default function App(){
     <Text style={s.brand}>STRIDE <Text style={s.brandAccent}>●</Text></Text>
     {!user?<View style={s.auth}>
       <Text style={s.title}>Make every step count.</Text><Text style={s.muted}>The private challenge for your crew.</Text>
+      <TextInput style={s.input} placeholder="Backend HTTPS URL" placeholderTextColor={C.muted} autoCapitalize="none" keyboardType="url" value={apiUrl} onChangeText={setApiUrlInput}/>
       {mode==='register'&&<TextInput style={s.input} placeholder="Display name" placeholderTextColor={C.muted} value={name} onChangeText={setName}/>}
       <TextInput style={s.input} placeholder="Email" placeholderTextColor={C.muted} autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail}/>
       <TextInput style={s.input} placeholder="Password (10+ characters)" placeholderTextColor={C.muted} secureTextEntry value={password} onChangeText={setPassword}/>

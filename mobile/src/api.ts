@@ -1,7 +1,18 @@
 import * as SecureStore from 'expo-secure-store';
 
-// Set EXPO_PUBLIC_API_URL to your HTTPS backend before building.
-const base = process.env.EXPO_PUBLIC_API_URL || '';
+let base = process.env.EXPO_PUBLIC_API_URL || '';
+export async function setApiUrl(url:string) {
+  const normalized = url.trim().replace(/\/+$/, '');
+  if (!normalized.startsWith('https://') && !normalized.startsWith('http://localhost'))
+    throw new Error('Use a reachable HTTPS URL');
+  base = normalized;
+  await SecureStore.setItemAsync('stride_api_url', base);
+}
+export async function getApiUrl() {
+  const saved = await SecureStore.getItemAsync('stride_api_url');
+  if (saved) base = saved;
+  return base;
+}
 export type Entry = {id:number; name:string; rank:number; steps:number; lastSync:string};
 export type Board = {entries:Entry[]; wallet:{points:number; coins:number}; settled:boolean; from:string; through:string};
 
