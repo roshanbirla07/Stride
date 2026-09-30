@@ -39,3 +39,14 @@ jobs:
           name: stride-android-apk
           path: mobile/android/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
+      - name: Install and launch on Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          script: |
+            adb install -r mobile/android/app/build/outputs/apk/release/app-release.apk
+            adb shell monkey -p com.roshanbirla.stridepilot 1
+            sleep 8
+            adb shell pidof com.roshanbirla.stridepilot | grep -E '[0-9]'
