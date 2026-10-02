@@ -61,3 +61,24 @@ The app requests read-only steps, syncs the current day on demand, and attempts 
 5. After 00:30 IST, execute the settlement worker twice and confirm the second reports `alreadySettled`. Check the coin and point totals in the app.
 
 The API and settlement tests run locally. Native builds, store signing, and physical HealthKit/Health Connect reads must be checked on actual devices.
+
+## iPhone web pilot with Apple Shortcuts
+
+Open the same HTTPS API address in Safari (for the current EC2 pilot, `https://65.1.182.82/`). Create an account or sign in to see the day, week, and month leaderboard. The board refreshes every minute while visible and when Safari comes back into focus.
+
+Expand **Set up iPhone sync** on the page. Generate a dedicated upload token and follow the displayed Shortcuts steps. The token appears only once, expires after 45 days, and can be rotated or revoked. The Shortcut should send `POST /shortcut/steps` with `Authorization: Bearer <upload token>` and JSON `{ "steps": <number> }`; the backend assigns the current IST date and records the source as `healthkit`. You can also send an explicit `day` (`YYYY-MM-DD`) when uploading yesterday during the 00:00–00:29 IST grace period. The upload token cannot access the account or leaderboard endpoints.
+
+Tap **Sync now** in Safari to run the Shortcut named **Stride Sync**. Set a personal Shortcuts **Time of Day** automation at 11:45 PM IST, daily, **Run Immediately**, with **Run Shortcut → Stride Sync** for automatic uploads. The daily run captures steps as of 11:45 PM; tap Sync now later to include the final minutes. iOS may delay or miss an automation when the phone is off or disconnected, so verify the first daily upload and check the board near the cutoff.
+
+**Health sample caveat:** a Shortcuts sum of raw Health step samples may differ from Apple Health's displayed total, particularly when Apple Watch and iPhone samples overlap. Compare the first sync with Health and filter the Shortcut to one preferred source if needed. This pilot flow requires manual setup on each iPhone; a web page cannot grant Health access or install the Shortcut on its own.
+
+To update the EC2 instance after pulling this version:
+
+```sh
+cd /home/ubuntu/Stride
+git pull
+sudo systemctl restart stride
+curl -f https://65.1.182.82/health
+```
+
+The new SQLite token table is created automatically at startup. Nginx already proxies `/` to the API, so the web UI needs no new Nginx location.
