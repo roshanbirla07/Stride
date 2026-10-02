@@ -15,6 +15,7 @@ export async function getApiUrl() {
 }
 export type Entry = {id:number; name:string; rank:number; steps:number; lastSync:string};
 export type Board = {entries:Entry[]; wallet:{points:number; coins:number}; settled:boolean; from:string; through:string};
+export type Group = {id:number;name:string;code:string;ownerId:number|null;effectiveDay:string};
 
 async function request(path:string, method='GET', body?:object, token?:string) {
   if (!base.startsWith('https://') && !base.startsWith('http://localhost'))
@@ -47,9 +48,13 @@ async function withToken(path:string, method='GET', body?:object) {
   if (!token) throw new Error('Sign in required');
   return request(path,method,body,token);
 }
-export async function board(period:'day'|'week'|'month', day:string):Promise<Board> {
-  return withToken('/leaderboard?period='+period+'&day='+day);
+export async function board(period:'day'|'week'|'month', day:string, groupId:number):Promise<Board> {
+  return withToken('/leaderboard?period='+period+'&day='+day+'&groupId='+groupId);
 }
 export async function upload(day:string, steps:number, source:string) {
   return withToken('/steps','POST',{day,steps,source});
 }
+export async function groups():Promise<{groups:Group[]}> {return withToken('/groups');}
+export async function createGroup(name:string):Promise<Group> {return withToken('/groups','POST',{name});}
+export async function joinGroup(code:string):Promise<{groups:Group[]}> {return withToken('/groups/join','POST',{code});}
+export async function rotateGroupCode(groupId:number):Promise<{id:number;code:string}> {return withToken('/groups/rotate','POST',{groupId});}
