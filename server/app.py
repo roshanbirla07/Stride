@@ -41,6 +41,9 @@ def init():
         CREATE TABLE IF NOT EXISTS sessions(
           token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id),
           expires_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS shortcut_tokens(
+          user_id INTEGER PRIMARY KEY REFERENCES users(id), token_hash TEXT NOT NULL UNIQUE,
+          expires_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS step_days(
           user_id INTEGER NOT NULL REFERENCES users(id), day TEXT NOT NULL,
           steps INTEGER NOT NULL, source TEXT NOT NULL, synced_at TEXT NOT NULL,
@@ -111,6 +114,36 @@ def auth(header):
     if not user:
         raise Problem(401, "Session expired")
     return dict(user)
+
+
+def create_shortcut_token(uid):
+    raw = secrets.token_urlsafe(32)
+    expiry = (now_ist() + timedelta(days=45)).isoformat()
+    with connect() as db:
+        db.execute("""INSERT INTO shortcut_tokens(user_id,token_hash,expires_at)
+            VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET
+            token_hash=excluded.token_hash,expires_at=excluded.expires_at""",
+            (uid, hashlib.sha256(raw.encode()).hexdigest(), expiry))
+    return {"token": raw, "expiresAt": expiry}
+
+
+def shortcut_auth(header):
+    if not header.startswith("Bearer ") or not header[7:]:
+        raise Problem(401, "Shortcut token required")
+    key = hashlib.sha256(header[7:].encode()).hexdigest()
+    with connect() as db:
+        row = db.execute("SELECT user_id FROM shortcut_tokens WHERE token_hash=? AND expires_at>?",
+                         (key, now_ist().isoformat())).fetchone()
+    if not row:
+        raise Problem(401, "Shortcut token expired or revoked")
+    return row["user_id"]
+
+
+def shortcut_status(uid):
+    with connect() as db:
+        row = db.execute("SELECT expires_at FROM shortcut_tokens WHERE user_id=?", (uid,)).fetchone()
+    return {"connected": bool(row and row["expires_at"] > now_ist().isoformat()),
+            "expiresAt": row["expires_at"] if row else None}
 
 
 def day_allowed(day, clock):
@@ -211,6 +244,18 @@ def leaderboard(period, day, uid):
 
 
 class Handler(BaseHTTPRequestHandler):
+    def static(self, name, mime):
+        payload = (Path(__file__).with_name("web") / name).read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", mime)
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'")
+        self.end_headers()
+        self.wfile.write(payload)
+
     def reply(self, code, data):
         payload = json.dumps(data).encode()
         self.send_response(code)
@@ -237,15 +282,32 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(201, register(body.get("name"), body.get("email"), body.get("password")))
             if path.path == "/auth/login":
                 return self.reply(200, login(body.get("email"), body.get("password")))
+            if path.path == "/shortcut/steps":
+                uid = shortcut_auth(self.headers.get("Authorization", ""))
+                day = body.get("day", now_ist().date().isoformat())
+                return self.reply(200, sync(uid, day, body.get("steps"), "healthkit"))
             user = auth(self.headers.get("Authorization", ""))
             if path.path == "/steps":
                 return self.reply(200, sync(user["id"], body.get("day"), body.get("steps"), body.get("source")))
+            if path.path == "/shortcut/token":
+                return self.reply(201, create_shortcut_token(user["id"]))
+            if path.path == "/shortcut/revoke":
+                with connect() as db:
+                    db.execute("DELETE FROM shortcut_tokens WHERE user_id=?", (user["id"],))
+                return self.reply(200, {"connected": False})
         else:
+            static = {"/": ("index.html", "text/html; charset=utf-8"),
+                      "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+                      "/style.css": ("style.css", "text/css; charset=utf-8")}
+            if path.path in static:
+                return self.static(*static[path.path])
             if path.path == "/health":
                 return self.reply(200, {"ok": True})
             user = auth(self.headers.get("Authorization", ""))
             if path.path == "/me":
                 return self.reply(200, user)
+            if path.path == "/shortcut/status":
+                return self.reply(200, shortcut_status(user["id"]))
             if path.path == "/leaderboard":
                 return self.reply(200, leaderboard(query.get("period", ["day"])[0],
                     query.get("day", [now_ist().date().isoformat()])[0], user["id"]))
