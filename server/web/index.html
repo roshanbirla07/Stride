@@ -27,6 +27,15 @@
     </section>
     <section id="dashboard" hidden>
       <div class="hello"><div><p class="eyebrow">TODAY · <span id="today-label"></span></p><h1>Keep moving,<br><em id="user-name"></em></h1></div><div class="avatar" id="initials"></div></div>
+      <section class="group-panel"><div class="group-head"><label for="group-select">YOUR GROUP</label><button id="group-options" class="text-button" type="button">Manage groups</button></div>
+        <select id="group-select" aria-label="Choose leaderboard group"></select><p id="group-activation" class="hint"></p>
+        <div id="group-manage" hidden><p>Share a code to invite friends. Your steps upload once and count in every group you join. New memberships begin tomorrow.</p>
+          <div class="group-code"><span>Join code: <strong id="group-code"></strong></span><button id="copy-group-code" class="text-button" type="button">Copy</button></div>
+          <button id="rotate-group-code" class="text-button" type="button" hidden>Regenerate code</button>
+          <form id="create-group-form"><label for="new-group-name">Create a group</label><div class="form-row"><input id="new-group-name" placeholder="e.g. Office crew" minlength="2" maxlength="60" required><button type="submit" class="secondary">Create</button></div></form>
+          <form id="join-group-form"><label for="join-code">Join a group</label><div class="form-row"><input id="join-code" placeholder="8-character code" maxlength="8" autocapitalize="characters" required><button type="submit" class="secondary">Join</button></div></form>
+        </div><p id="group-message" class="message" role="status"></p>
+      </section>
       <nav class="tabs" aria-label="Leaderboard period"><button data-period="day" class="active">Today</button><button data-period="week">Week</button><button data-period="month">Month</button></nav>
       <div class="hero"><span>YOUR STEPS <span id="period-label">TODAY</span></span><strong id="my-steps">0</strong><small id="hero-note">Sync to join your crew</small><div class="arrow">↗</div></div>
       <div class="sync-row"><div><strong>Health sync</strong><p id="sync-status" class="muted">Set up your iPhone Shortcut</p></div><span class="live-dot"></span></div>
