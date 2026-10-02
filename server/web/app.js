@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id);
-const state = { token: sessionStorage.getItem('strideSession'), user: null, period: 'day', registering: false };
+const state = { token: sessionStorage.getItem('strideSession'), user: null, period: 'day', registering: false, groups: [], groupId: null };
 const fmt = n => Number(n || 0).toLocaleString();
 const setText = (id, value) => { $(id).textContent = value; };
 const istDay = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
@@ -20,7 +20,10 @@ function showAuth() {
   $('dashboard').hidden = true;
   $('auth-panel').hidden = false;
   state.token = null;
+  state.groups = [];
+  state.groupId = null;
   sessionStorage.removeItem('strideSession');
+  sessionStorage.removeItem('strideGroupId');
 }
 
 async function showDashboard() {
@@ -32,6 +35,7 @@ async function showDashboard() {
     setText('initials', state.user.name.slice(0, 2).toUpperCase());
     setText('today-label', istDay());
     setText('upload-url', `${location.origin}/shortcut/steps`);
+    await refreshGroups();
     await Promise.all([refresh(), tokenStatus()]);
   } catch (error) {
     if (/expired|sign in/i.test(error.message)) showAuth();
@@ -39,11 +43,48 @@ async function showDashboard() {
   }
 }
 
+async function refreshGroups(preferred) {
+  const result = await api('/groups');
+  state.groups = result.groups;
+  const remembered = Number(sessionStorage.getItem('strideGroupId'));
+  const choice = preferred ?? state.groupId ?? remembered;
+  state.groupId = state.groups.some(g => g.id === choice) ? choice : (state.groups[0]?.id ?? null);
+  const select = $('group-select'); select.replaceChildren();
+  if (!state.groups.length) {
+    const option = document.createElement('option'); option.textContent = 'Create or join a group'; option.value = '';
+    select.append(option); $('group-manage').hidden = false;
+  } else {
+    state.groups.forEach(g => {
+      const option = document.createElement('option'); option.value = g.id; option.textContent = g.name;
+      select.append(option);
+    });
+    select.value = String(state.groupId);
+  }
+  select.disabled = !state.groups.length;
+  sessionStorage.setItem('strideGroupId', String(state.groupId ?? ''));
+  const group = state.groups.find(g => g.id === state.groupId);
+  setText('group-code', group?.code ?? '—');
+  $('copy-group-code').disabled = !group;
+  $('rotate-group-code').hidden = !group || group.ownerId !== state.user.id;
+  setText('group-activation', group && group.effectiveDay > istDay()
+    ? `Your results in ${group.name} begin ${group.effectiveDay}. Keep syncing; uploads count once membership starts.`
+    : 'One step upload counts in every active group.');
+}
+
 async function refresh() {
   if (!state.token || !state.user) return;
   try {
     const day = istDay();
-    const board = await api(`/leaderboard?period=${state.period}&day=${day}`);
+    if (!state.groupId) {
+      setText('range', 'Create or join a group to see a leaderboard.');
+      setText('my-steps', '0'); setText('coins', '0'); setText('points', '0');
+      setText('sync-status', 'Set up your iPhone Shortcut');
+      $('entries').replaceChildren(); return;
+    }
+    const requestedGroup = state.groupId;
+    const requestedPeriod = state.period;
+    const board = await api(`/leaderboard?period=${requestedPeriod}&day=${day}&groupId=${requestedGroup}`);
+    if (state.groupId !== requestedGroup || state.period !== requestedPeriod) return;
     setText('today-label', day);
     setText('period-label', state.period.toUpperCase());
     setText('range', board.period === 'day' ? (board.settled ? 'Final results' : 'Live standings') : `${board.from} to ${board.through}`);
@@ -69,6 +110,42 @@ async function refresh() {
     setText('board-message', '');
   } catch (error) { setText('board-message', error.message); }
 }
+
+$('group-select').addEventListener('change', event => {
+  state.groupId = Number(event.target.value);
+  refreshGroups(state.groupId).then(refresh).catch(error => setText('group-message', error.message));
+});
+$('group-options').addEventListener('click', () => { $('group-manage').hidden = !$('group-manage').hidden; });
+$('create-group-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  try {
+    const group = await api('/groups', { method: 'POST', body: JSON.stringify({ name: $('new-group-name').value.trim() }) });
+    $('new-group-name').value = '';
+    await refreshGroups(group.id); await refresh();
+    setText('group-message', `Created ${group.name}. Share code ${group.code}; results begin ${group.effectiveDay}.`);
+  } catch (error) { setText('group-message', error.message); }
+});
+$('join-group-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  try {
+    const result = await api('/groups/join', { method: 'POST', body: JSON.stringify({ code: $('join-code').value.trim() }) });
+    const joined = result.groups.find(g => !state.groups.some(old => old.id === g.id));
+    $('join-code').value = '';
+    await refreshGroups(joined?.id); await refresh();
+    setText('group-message', `Joined ${joined?.name ?? 'group'}. Your results begin tomorrow.`);
+  } catch (error) { setText('group-message', error.message); }
+});
+$('copy-group-code').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('group-code').textContent); setText('group-message', 'Code copied.'); }
+  catch { setText('group-message', 'Select and copy the code above.'); }
+});
+$('rotate-group-code').addEventListener('click', async () => {
+  if (!confirm('Regenerate code? The previous invite code will stop working.')) return;
+  try {
+    await api('/groups/rotate', { method: 'POST', body: JSON.stringify({ groupId: state.groupId }) });
+    await refreshGroups(state.groupId); setText('group-message', 'New code ready to share.');
+  } catch (error) { setText('group-message', error.message); }
+});
 
 async function tokenStatus() {
   try {
@@ -110,7 +187,7 @@ document.querySelectorAll('[data-period]').forEach(button => button.addEventList
 }));
 
 $('sync-now').addEventListener('click', () => {
-  setText('sync-hint', 'Running “Stride Sync”… return to this page after it finishes.');
+  setText('sync-hint', 'Shortcut opened. Return after it finishes; check the step count above to confirm upload.');
   location.href = 'shortcuts://run-shortcut?name=Stride%20Sync';
   setTimeout(refresh, 4000);
 });
