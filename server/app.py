@@ -59,7 +59,39 @@ def init():
           day TEXT NOT NULL, kind TEXT NOT NULL, points INTEGER NOT NULL DEFAULT 0,
           coins INTEGER NOT NULL DEFAULT 0,
           UNIQUE(user_id,day,kind));
+        CREATE TABLE IF NOT EXISTS groups(
+          id INTEGER PRIMARY KEY, name TEXT NOT NULL, code TEXT NOT NULL UNIQUE,
+          owner_id INTEGER REFERENCES users(id), created_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS group_members(
+          group_id INTEGER NOT NULL REFERENCES groups(id),
+          user_id INTEGER NOT NULL REFERENCES users(id), effective_day TEXT NOT NULL,
+          PRIMARY KEY(group_id,user_id));
+        CREATE TABLE IF NOT EXISTS group_settlements(
+          group_id INTEGER NOT NULL REFERENCES groups(id), day TEXT NOT NULL,
+          settled_at TEXT NOT NULL, PRIMARY KEY(group_id,day));
+        CREATE TABLE IF NOT EXISTS group_results(
+          group_id INTEGER NOT NULL REFERENCES groups(id), day TEXT NOT NULL,
+          user_id INTEGER NOT NULL REFERENCES users(id), steps INTEGER,
+          rank INTEGER, status TEXT NOT NULL, PRIMARY KEY(group_id,day,user_id));
+        CREATE TABLE IF NOT EXISTS group_ledger(
+          id INTEGER PRIMARY KEY, group_id INTEGER NOT NULL REFERENCES groups(id),
+          user_id INTEGER NOT NULL REFERENCES users(id), day TEXT NOT NULL,
+          kind TEXT NOT NULL, points INTEGER NOT NULL DEFAULT 0,
+          coins INTEGER NOT NULL DEFAULT 0, UNIQUE(group_id,user_id,day,kind));
         """)
+        # One-time, idempotent migration of the pilot's original shared challenge.
+        if db.execute("SELECT 1 FROM users LIMIT 1").fetchone() and not db.execute(
+                "SELECT 1 FROM groups WHERE id=1").fetchone():
+            first_user = db.execute("SELECT id FROM users ORDER BY id LIMIT 1").fetchone()["id"]
+            db.execute("""INSERT INTO groups(id,name,code,owner_id,created_at)
+                VALUES(1,'Original crew',?,?,?)""", (new_group_code(db), first_user, now_ist().isoformat()))
+            db.execute("""INSERT INTO group_members(group_id,user_id,effective_day)
+                SELECT 1,id,substr(created_at,1,10) FROM users""")
+            db.execute("""INSERT INTO group_settlements SELECT 1,day,settled_at FROM settlements""")
+            db.execute("""INSERT INTO group_results
+                SELECT 1,day,user_id,steps,rank,status FROM results""")
+            db.execute("""INSERT INTO group_ledger(group_id,user_id,day,kind,points,coins)
+                SELECT 1,user_id,day,kind,points,coins FROM ledger""")
 
 
 class Problem(Exception):
@@ -146,6 +178,76 @@ def shortcut_status(uid):
             "expiresAt": row["expires_at"] if row else None}
 
 
+def new_group_code(db):
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    for _ in range(10):
+        code = "".join(secrets.choice(alphabet) for _ in range(8))
+        if not db.execute("SELECT 1 FROM groups WHERE code=?", (code,)).fetchone():
+            return code
+    raise Problem(503, "Could not allocate group code")
+
+
+def groups_for(uid):
+    with connect() as db:
+        rows = db.execute("""SELECT g.id,g.name,g.code,g.owner_id ownerId,
+            m.effective_day effectiveDay FROM group_members m
+            JOIN groups g ON g.id=m.group_id WHERE m.user_id=? ORDER BY g.id""", (uid,)).fetchall()
+    return {"groups": [dict(row) for row in rows]}
+
+
+def create_group(uid, name):
+    name = str(name).strip() if isinstance(name, str) else ""
+    if not 2 <= len(name) <= 60:
+        raise Problem(400, "Group name must be 2–60 characters")
+    clock = now_ist()
+    effective = (clock.date() + timedelta(days=1)).isoformat()
+    with connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        code = new_group_code(db)
+        cur = db.execute("INSERT INTO groups(name,code,owner_id,created_at) VALUES(?,?,?,?)",
+                         (name, code, uid, clock.isoformat()))
+        db.execute("INSERT INTO group_members VALUES(?,?,?)", (cur.lastrowid, uid, effective))
+    return {"id": cur.lastrowid, "name": name, "code": code, "ownerId": uid,
+            "effectiveDay": effective}
+
+
+def join_group(uid, code):
+    code = str(code).strip().upper() if isinstance(code, str) else ""
+    with connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("SELECT id FROM groups WHERE code=?", (code,)).fetchone()
+        if not row:
+            raise Problem(404, "Group code not found")
+        if db.execute("SELECT 1 FROM group_members WHERE group_id=? AND user_id=?",
+                      (row["id"], uid)).fetchone():
+            raise Problem(409, "Already in this group")
+        effective = (now_ist().date() + timedelta(days=1)).isoformat()
+        db.execute("INSERT INTO group_members VALUES(?,?,?)", (row["id"], uid, effective))
+    return groups_for(uid)
+
+
+def rotate_group_code(uid, group_id):
+    with connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("SELECT owner_id FROM groups WHERE id=?", (group_id,)).fetchone()
+        if not row or row["owner_id"] != uid:
+            raise Problem(403, "Only the group creator can change its code")
+        code = new_group_code(db)
+        db.execute("UPDATE groups SET code=? WHERE id=?", (code, group_id))
+    return {"id": group_id, "code": code}
+
+
+def member_group(uid, group_id):
+    with connect() as db:
+        if group_id is None:
+            row = db.execute("SELECT group_id FROM group_members WHERE user_id=? ORDER BY group_id LIMIT 1", (uid,)).fetchone()
+            group_id = row["group_id"] if row else None
+        if type(group_id) is not int or not db.execute(
+                "SELECT 1 FROM group_members WHERE group_id=? AND user_id=?", (group_id, uid)).fetchone():
+            raise Problem(403, "Join a group to view its leaderboard")
+    return group_id
+
+
 def day_allowed(day, clock):
     try:
         parsed = datetime.strptime(day, "%Y-%m-%d").date()
@@ -184,41 +286,51 @@ def settle(day, clock=None):
         raise Problem(409, "Wait until the 12:30 AM IST cutoff")
     with connect() as db:
         db.execute("BEGIN IMMEDIATE")
-        if db.execute("SELECT 1 FROM settlements WHERE day=?", (day,)).fetchone():
-            return {"day": day, "alreadySettled": True}
-        users = db.execute("SELECT id FROM users WHERE date(created_at)<=?", (day,)).fetchall()
-        rows = db.execute("SELECT user_id,steps FROM step_days WHERE day=? ORDER BY steps DESC,user_id", (day,)).fetchall()
-        eligible = {r["user_id"]: r["steps"] for r in rows}
-        if len(eligible) >= 2:
-            high, low = max(eligible.values()), min(eligible.values())
-            winners = [u for u, steps in eligible.items() if steps == high]
-            losers = [u for u, steps in eligible.items() if steps == low]
-            # A tied last place is not penalized. Top ties split the prize.
-            for uid in winners:
-                db.execute("INSERT INTO ledger(user_id,day,kind,coins) VALUES(?,?,?,?)",
-                           (uid, day, "winner", WIN_COINS // len(winners)))
-            if len(losers) == 1 and high != low:
-                uid = losers[0]
-                db.execute("INSERT INTO ledger(user_id,day,kind,points) VALUES(?,?,?,?)",
-                           (uid, day, "last", -10))
-                streak = 1
-                while db.execute("SELECT 1 FROM ledger WHERE user_id=? AND day=? AND kind='last'",
-                                 (uid, (parsed-timedelta(days=streak)).isoformat())).fetchone():
-                    streak += 1
-                if streak % 3 == 0:
-                    db.execute("INSERT INTO ledger(user_id,day,kind,points) VALUES(?,?,?,?)",
-                               (uid, day, "three_last", -50))
-        for user in users:
-            uid = user["id"]
-            steps = eligible.get(uid)
-            rank = (1 + sum(n > steps for n in eligible.values())) if steps is not None else None
-            db.execute("INSERT INTO results VALUES(?,?,?,?,?)",
-                       (day, uid, steps, rank, "verified" if steps is not None else "unverified"))
-        db.execute("INSERT INTO settlements VALUES(?,?)", (day, clock.isoformat()))
-    return {"day": day, "alreadySettled": False, "verified": len(eligible)}
+        pending = db.execute("""SELECT DISTINCT m.group_id FROM group_members m
+            WHERE m.effective_day<=? AND NOT EXISTS
+            (SELECT 1 FROM group_settlements s WHERE s.group_id=m.group_id AND s.day=?)""",
+            (day, day)).fetchall()
+        verified_total = 0
+        for group in pending:
+            gid = group["group_id"]
+            users = db.execute("SELECT user_id FROM group_members WHERE group_id=? AND effective_day<=?",
+                               (gid, day)).fetchall()
+            rows = db.execute("""SELECT s.user_id,s.steps FROM step_days s
+                JOIN group_members m ON m.user_id=s.user_id AND m.group_id=?
+                WHERE s.day=? AND m.effective_day<=?""", (gid, day, day)).fetchall()
+            eligible = {r["user_id"]: r["steps"] for r in rows}
+            verified_total += len(eligible)
+            if len(eligible) >= 2:
+                high, low = max(eligible.values()), min(eligible.values())
+                winners = [u for u, steps in eligible.items() if steps == high]
+                losers = [u for u, steps in eligible.items() if steps == low]
+                for winner in winners:
+                    db.execute("""INSERT INTO group_ledger(group_id,user_id,day,kind,coins)
+                        VALUES(?,?,?,?,?)""", (gid, winner, day, "winner", WIN_COINS // len(winners)))
+                if len(losers) == 1 and high != low:
+                    loser = losers[0]
+                    db.execute("""INSERT INTO group_ledger(group_id,user_id,day,kind,points)
+                        VALUES(?,?,?,?,?)""", (gid, loser, day, "last", -10))
+                    streak = 1
+                    while db.execute("""SELECT 1 FROM group_ledger
+                        WHERE group_id=? AND user_id=? AND day=? AND kind='last'""",
+                        (gid, loser, (parsed-timedelta(days=streak)).isoformat())).fetchone():
+                        streak += 1
+                    if streak % 3 == 0:
+                        db.execute("""INSERT INTO group_ledger(group_id,user_id,day,kind,points)
+                            VALUES(?,?,?,?,?)""", (gid, loser, day, "three_last", -50))
+            for user in users:
+                uid = user["user_id"]
+                steps = eligible.get(uid)
+                rank = (1 + sum(n > steps for n in eligible.values())) if steps is not None else None
+                db.execute("INSERT INTO group_results VALUES(?,?,?,?,?,?)",
+                    (gid, day, uid, steps, rank, "verified" if steps is not None else "unverified"))
+            db.execute("INSERT INTO group_settlements VALUES(?,?,?)", (gid, day, clock.isoformat()))
+    return {"day": day, "alreadySettled": not bool(pending),
+            "groupsSettled": len(pending), "verified": verified_total}
 
 
-def leaderboard(period, day, uid):
+def leaderboard(period, day, uid, group_id=None):
     if period not in ("day", "week", "month"):
         raise Problem(400, "Invalid period")
     try:
@@ -229,14 +341,20 @@ def leaderboard(period, day, uid):
         raise Problem(400, "Future date")
     start = target if period == "day" else (
         target-timedelta(days=target.weekday()) if period == "week" else target.replace(day=1))
+    group_id = member_group(uid, group_id)
     with connect() as db:
         rows = db.execute("""SELECT u.id,u.name,SUM(s.steps) steps,MAX(s.synced_at) last_sync
             FROM step_days s JOIN users u ON u.id=s.user_id
-            WHERE s.day BETWEEN ? AND ? GROUP BY u.id ORDER BY steps DESC,u.id""",
-            (start.isoformat(), target.isoformat())).fetchall()
-        settled = bool(db.execute("SELECT 1 FROM settlements WHERE day=?", (day,)).fetchone())
-        wallet = db.execute("SELECT COALESCE(SUM(points),0) points,COALESCE(SUM(coins),0) coins FROM ledger WHERE user_id=?", (uid,)).fetchone()
-    return {"period": period, "from": start.isoformat(), "through": day,
+            JOIN group_members m ON m.user_id=s.user_id AND m.group_id=?
+            WHERE s.day BETWEEN ? AND ? AND s.day>=m.effective_day
+            GROUP BY u.id ORDER BY steps DESC,u.id""",
+            (group_id, start.isoformat(), target.isoformat())).fetchall()
+        settled = bool(db.execute("SELECT 1 FROM group_settlements WHERE group_id=? AND day=?",
+                                  (group_id, day)).fetchone())
+        wallet = db.execute("""SELECT COALESCE(SUM(points),0) points,
+            COALESCE(SUM(coins),0) coins FROM group_ledger WHERE group_id=? AND user_id=?""",
+            (group_id, uid)).fetchone()
+    return {"groupId": group_id, "period": period, "from": start.isoformat(), "through": day,
             "settled": settled if period == "day" else False, "wallet": dict(wallet),
             "entries": [{"rank": 1+sum(x["steps"] > r["steps"] for x in rows), "id": r["id"],
                          "name": r["name"], "steps": r["steps"], "lastSync": r["last_sync"]}
@@ -298,6 +416,12 @@ class Handler(BaseHTTPRequestHandler):
                 with connect() as db:
                     db.execute("DELETE FROM shortcut_tokens WHERE user_id=?", (user["id"],))
                 return self.reply(200, {"connected": False})
+            if path.path == "/groups":
+                return self.reply(201, create_group(user["id"], body.get("name")))
+            if path.path == "/groups/join":
+                return self.reply(200, join_group(user["id"], body.get("code")))
+            if path.path == "/groups/rotate":
+                return self.reply(200, rotate_group_code(user["id"], body.get("groupId")))
         else:
             static = {"/": ("index.html", "text/html; charset=utf-8"),
                       "/app.js": ("app.js", "text/javascript; charset=utf-8"),
@@ -309,11 +433,18 @@ class Handler(BaseHTTPRequestHandler):
             user = auth(self.headers.get("Authorization", ""))
             if path.path == "/me":
                 return self.reply(200, user)
+            if path.path == "/groups":
+                return self.reply(200, groups_for(user["id"]))
             if path.path == "/shortcut/status":
                 return self.reply(200, shortcut_status(user["id"]))
             if path.path == "/leaderboard":
+                raw_group = query.get("groupId", [None])[0]
+                try:
+                    group_id = int(raw_group) if raw_group is not None else None
+                except ValueError:
+                    raise Problem(400, "Invalid group")
                 return self.reply(200, leaderboard(query.get("period", ["day"])[0],
-                    query.get("day", [now_ist().date().isoformat()])[0], user["id"]))
+                    query.get("day", [now_ist().date().isoformat()])[0], user["id"], group_id))
         raise Problem(404, "Not found")
 
     def do_GET(self):
