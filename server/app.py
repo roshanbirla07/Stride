@@ -285,7 +285,10 @@ class Handler(BaseHTTPRequestHandler):
             if path.path == "/shortcut/steps":
                 uid = shortcut_auth(self.headers.get("Authorization", ""))
                 day = body.get("day", now_ist().date().isoformat())
-                return self.reply(200, sync(uid, day, body.get("steps"), "healthkit"))
+                steps = body.get("steps")
+                if type(steps) is float and steps.is_integer():
+                    steps = int(steps)
+                return self.reply(200, sync(uid, day, steps, "healthkit"))
             user = auth(self.headers.get("Authorization", ""))
             if path.path == "/steps":
                 return self.reply(200, sync(user["id"], body.get("day"), body.get("steps"), body.get("source")))
