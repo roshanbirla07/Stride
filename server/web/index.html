@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#101827">
+  <title>Stride · Your crew challenge</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main class="shell">
+    <header><div class="brand">S T R I D E <span class="dot"></span></div><span class="pill">iPhone pilot</span></header>
+    <section id="auth-panel" class="auth-panel">
+      <p class="eyebrow">YOUR CREW. YOUR PACE.</p>
+      <h1>Make every<br><em>step count.</em></h1>
+      <p class="muted">The private step challenge for your crew. Sign in to see the live standings.</p>
+      <form id="auth-form" class="card">
+        <h2 id="auth-title">Sign in</h2>
+        <label id="name-wrap" hidden>Name<input id="name" autocomplete="name" maxlength="60"></label>
+        <label>Email<input id="email" type="email" autocomplete="email" required></label>
+        <label>Password<input id="password" type="password" autocomplete="current-password" minlength="10" required></label>
+        <button class="primary" id="auth-submit" type="submit">Sign in</button>
+        <button class="text-button" id="auth-toggle" type="button">New here? Create account</button>
+        <p id="auth-message" class="message" role="status"></p>
+      </form>
+    </section>
+    <section id="dashboard" hidden>
+      <div class="hello"><div><p class="eyebrow">TODAY · <span id="today-label"></span></p><h1>Keep moving,<br><em id="user-name"></em></h1></div><div class="avatar" id="initials"></div></div>
+      <nav class="tabs" aria-label="Leaderboard period"><button data-period="day" class="active">Today</button><button data-period="week">Week</button><button data-period="month">Month</button></nav>
+      <div class="hero"><span>YOUR STEPS <span id="period-label">TODAY</span></span><strong id="my-steps">0</strong><small id="hero-note">Sync to join your crew</small><div class="arrow">↗</div></div>
+      <div class="sync-row"><div><strong>Health sync</strong><p id="sync-status" class="muted">Set up your iPhone Shortcut</p></div><span class="live-dot"></span></div>
+      <button class="primary sync-button" id="sync-now">↻ &nbsp; Sync now</button>
+      <p id="sync-hint" class="hint">Create the “Stride Sync” Shortcut below first. Return here after it runs.</p>
+      <section class="leaderboard"><div class="section-title"><h2>Leaderboard</h2><span class="wallet">🪙 <span id="coins">0</span> · <span id="points">0</span> pts</span></div><p class="muted" id="range"></p><div id="entries"></div><p id="board-message" class="message" role="status"></p></section>
+      <details class="setup" id="setup"><summary>Set up iPhone sync <span>↗</span></summary><div class="setup-body">
+        <p>One time on your iPhone: make a Shortcut named <strong>Stride Sync</strong>. It reads your Health step samples and uploads today's total to your account.</p>
+        <button id="create-token" class="secondary">Generate upload token</button><button id="revoke-token" class="text-button">Revoke token</button>
+        <div id="token-box" hidden><p class="warn">Copy this token now. It is shown only once. Generating another token stops the old Shortcut until you replace its token.</p><code id="upload-token"></code><button id="copy-token" class="secondary">Copy token</button></div>
+        <p id="token-status" class="hint"></p>
+        <ol>
+          <li>Open <strong>Shortcuts</strong> → <strong>+</strong>. Name it <strong>Stride Sync</strong>.</li>
+          <li>Add <strong>Find Health Samples</strong>: Type = <strong>Steps</strong>, Start Date = <strong>Today</strong>, sort/filter without a sample limit. Give Health access when prompted.</li>
+          <li>Add <strong>Get Details of Health Samples</strong> → <strong>Value</strong>, then <strong>Calculate Statistics</strong> → <strong>Sum</strong>.</li>
+          <li>Add <strong>Get Contents of URL</strong>. URL: <code id="upload-url"></code>. Set method <strong>POST</strong>, header <code>Authorization</code> = <code>Bearer YOUR_TOKEN</code>, and request body <strong>JSON</strong> with key <code>steps</code> and the Sum result as a number. Replace YOUR_TOKEN with the copied token.</li>
+          <li>Run the Shortcut once, allow network access, then return here and tap refresh if needed. Compare the step total with Apple Health before using the rankings.</li>
+        </ol>
+        <div class="automation"><strong>Automatic daily upload</strong><p>Shortcuts → Automation → + → Time of Day → Daily at <strong>11:45 PM IST</strong> → Run Immediately → Run Shortcut → Stride Sync. Keep the iPhone on and connected. iOS controls when the automation runs; check the board after the first night.</p></div>
+        <p class="hint">If iPhone and Apple Watch both record steps, a raw sample sum can count overlapping samples. Check the first upload against Health; filter to your preferred source if totals differ. Uploaded totals replace earlier uploads for the same day. Days close at midnight IST; yesterday's upload is accepted until 12:30 AM IST only if the Shortcut supplies a <code>day</code> value for yesterday.</p>
+      </div></details>
+      <footer><p>Results finalize at 12:30 AM IST. Unverified users do not enter the leaderboard.</p><button id="sign-out" class="text-button">Sign out</button></footer>
+    </section>
+  </main>
+</body>
+</html>
