@@ -10,7 +10,8 @@
       "supportsTablet": false
     },
     "android": {
-      "package": "com.roshanbirla.stridepilot"
+      "package": "com.roshanbirla.stridepilot",
+      "permissions": ["android.permission.health.READ_STEPS"]
     },
     "plugins": [
       "expo-secure-store",
