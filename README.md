@@ -1,6 +1,6 @@
 # Stride pilot
 
-One cross-platform mobile app (Night Arena design) and a small Python/SQLite API for a private 3–4 person step challenge. No shop, teams, or other secondary features yet.
+Android app, iPhone web/Shortcuts pilot, and a small Python/SQLite API for private step challenges. One account may belong to several groups. No shop or other secondary features yet.
 
 ## Rules
 
@@ -10,6 +10,13 @@ One cross-platform mobile app (Night Arena design) and a small Python/SQLite API
 - One verified last place gets **−10 points**; on each third consecutive last-place day the user gets another **−50 points**. Coins and points are separate.
 - A user without a confirmed upload for the day is unverified and receives no last-place penalty. Finalization is transactional and safe to rerun.
 - This is a **pilot**, not an anti-cheat implementation: an altered client can forge uploaded totals. Do not attach valuable rewards until ingestion and abuse controls are designed.
+- Each group has its own leaderboard, coin balance, point balance, daily winner, and last-place streak. Steps are uploaded once per person per day and used in every group where membership is active. New group memberships become active the next IST day; earlier days never backfill.
+
+## Groups
+
+On the web page or updated Android app, open **Manage groups** to create a named group or join with an eight-character invite code. Select a group to view its standings and wallet. Members can share its code; the group creator can regenerate it. A user can join several groups, such as office and home. Existing users move into **Original crew** automatically when the backend first starts with the new schema. Their prior finalized results and balances are copied into that group once. New accounts start with no group and can create or join one.
+
+API: `GET /groups`, `POST /groups` with `{ "name": "Office" }`, `POST /groups/join` with `{ "code": "..." }`, `POST /groups/rotate` with `{ "groupId": 2 }`, and `GET /leaderboard?period=day&day=YYYY-MM-DD&groupId=2`. All need the regular account bearer token. Shortcut uploads still use their own restricted token and need no group ID.
 
 ## Start backend
 
@@ -72,13 +79,14 @@ Tap **Sync now** in Safari to run the Shortcut named **Stride Sync**. Set a pers
 
 **Health sample caveat:** a Shortcuts sum of raw Health step samples may differ from Apple Health's displayed total, particularly when Apple Watch and iPhone samples overlap. Compare the first sync with Health and filter the Shortcut to one preferred source if needed. This pilot flow requires manual setup on each iPhone; a web page cannot grant Health access or install the Shortcut on its own.
 
-To update the EC2 instance after pulling this version:
+The new SQLite tables are created automatically at startup. Before applying the group migration on EC2, back up the database with SQLite's backup API (which also handles WAL data):
 
 ```sh
+sudo -u ubuntu python3 -c 'import sqlite3; source=sqlite3.connect("/var/lib/stride/stride.sqlite3"); dest=sqlite3.connect("/var/lib/stride/stride-before-groups.sqlite3"); source.backup(dest); dest.close(); source.close()'
 cd /home/ubuntu/Stride
 git pull
 sudo systemctl restart stride
 curl -f https://65.1.182.82/health
 ```
 
-The new SQLite token table is created automatically at startup. Nginx already proxies `/` to the API, so the web UI needs no new Nginx location.
+Nginx already proxies `/` to the API. Android users need the APK built from this revision to see the group switcher; their old APK can still view its first joined group through the compatibility default, but cannot create or select groups.
