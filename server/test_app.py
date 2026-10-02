@@ -63,6 +63,24 @@ class CoreFlow(unittest.TestCase):
         with app.connect() as db:
             self.assertEqual(db.execute("SELECT count(*) FROM ledger WHERE points<0").fetchone()[0],0)
 
+    def test_shortcut_token_rotation_and_scope(self):
+        uid = self.ids[0]
+        first = app.create_shortcut_token(uid)["token"]
+        self.assertEqual(app.shortcut_auth("Bearer " + first), uid)
+        self.assertTrue(app.shortcut_status(uid)["connected"])
+        second = app.create_shortcut_token(uid)["token"]
+        with self.assertRaises(app.Problem):
+            app.shortcut_auth("Bearer " + first)
+        self.assertEqual(app.shortcut_auth("Bearer " + second), uid)
+        today = app.now_ist().date().isoformat()
+        app.sync(app.shortcut_auth("Bearer " + second), today, 5432, "healthkit")
+        board = app.leaderboard("day", today, uid)
+        self.assertEqual(board["entries"][0]["steps"], 5432)
+        with app.connect() as db:
+            db.execute("DELETE FROM shortcut_tokens WHERE user_id=?", (uid,))
+        with self.assertRaises(app.Problem):
+            app.shortcut_auth("Bearer " + second)
+
 
 if __name__ == "__main__":
     unittest.main()
