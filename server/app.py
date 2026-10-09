@@ -6,6 +6,8 @@ import os
 import secrets
 import sqlite3
 import sys
+import traceback
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -22,12 +24,17 @@ def now_ist():
     return datetime.now(IST)
 
 
+@contextmanager
 def connect():
     db = sqlite3.connect(DB, timeout=10)
-    db.row_factory = sqlite3.Row
-    db.execute("PRAGMA foreign_keys=ON")
-    db.execute("PRAGMA busy_timeout=10000")
-    return db
+    try:
+        db.row_factory = sqlite3.Row
+        db.execute("PRAGMA foreign_keys=ON")
+        db.execute("PRAGMA busy_timeout=10000")
+        with db:
+            yield db
+    finally:
+        db.close()
 
 
 def init():
@@ -459,7 +466,7 @@ class Handler(BaseHTTPRequestHandler):
         except Problem as e:
             self.reply(e.status, {"error": e.message})
         except Exception:
-            print("Request failed", file=sys.stderr)
+            traceback.print_exc()
             self.reply(500, {"error": "Internal server error"})
 
 
