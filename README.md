@@ -4,13 +4,12 @@ Android app, iPhone web/Shortcuts pilot, and a small Python/SQLite API for priva
 
 ## Rules
 
-- All challenge days use **Asia/Kolkata**. Midnight ends the day; uploads for yesterday close at **00:30 IST**.
-- Leaderboards show daily, calendar week (Monday onward), and calendar month totals. A day finalizes at 00:30 IST.
-- A top-step tie splits the 100-coin daily prize; a bottom-step tie is not penalized. With fewer than two verified participants, neither prize nor penalty applies.
-- One verified last place gets **−10 points**; on each third consecutive last-place day the user gets another **−50 points**. Coins and points are separate.
-- A user without a confirmed upload for the day is unverified and receives no last-place penalty. Finalization is transactional and safe to rerun.
-- This is a **pilot**, not an anti-cheat implementation: an altered client can forge uploaded totals. Do not attach valuable rewards until ingestion and abuse controls are designed.
-- Each group has its own leaderboard, coin balance, point balance, daily winner, and last-place streak. Steps are uploaded once per person per day and used in every group where membership is active. New group memberships become active the next IST day; earlier days never backfill.
+- All challenge date ranges use **Asia/Kolkata** and end at **00:00 IST**. Weeks start Monday; months start on the first.
+- Refresh reads the full selected range from the device health provider and replaces its latest total; it does not depend on previous daily Stride uploads.
+- Each member/group/period retains one latest total for ranking while members are offline. The refresh timestamp is visible. Equal step totals share a rank.
+- Membership becomes active the next IST day; earlier steps do not count toward that group.
+- Daily rewards and penalties are paused because latest-only totals do not retain the history needed for settlement. Existing balances and historical records are preserved.
+- This remains a pilot: a modified client can forge totals. Data reflects the configured health provider and permissions, not necessarily every vendor app's displayed count.
 
 ## Groups
 
@@ -35,13 +34,7 @@ python3 -m unittest -v
 curl http://localhost:8000/health
 ```
 
-At **00:30 IST** run `python3 /path/to/server/app.py settle` from cron or a systemd timer; the job defaults to yesterday. Example cron on an IST-configured host:
-
-```cron
-30 0 * * * /usr/bin/python3 /srv/stride/server/app.py settle >> /var/log/stride-settlement.log 2>&1
-```
-
-On a UTC host the equivalent schedule is **19:00 UTC** on the previous calendar date. The app uses its own IST clock to choose the settlement day. Use a backup of the SQLite file and a single shared backend instance for the pilot.
+Daily reward settlement is **paused** for latest-only refresh. Disable any existing settlement cron/systemd timer before deploying. The `settle` CLI exits with an explanation instead of creating daily result/ledger records from stale totals. Existing balances and historical records are preserved; new refreshes do not award or deduct coins/points.
 
 ## Mobile setup and install
 
@@ -57,15 +50,21 @@ EXPO_PUBLIC_API_URL=https://your-api.example.com npx expo start --dev-client
 
 Enter your backend HTTPS URL on the first screen (or set `EXPO_PUBLIC_API_URL` as a build-time default). For Android, `npx eas build --platform android --profile pilot` creates an installable internal APK. For iOS, `npx eas build --platform ios --profile testflight`, then submit through App Store Connect and invite your testers via TestFlight. External TestFlight beta review may be required. Configure signing in EAS or Xcode.
 
-The app requests read-only steps, syncs the current day on demand, and attempts yesterday again during 00:00–00:29 IST when opened. It also resyncs when brought to foreground after the user connected. Phone background execution is not guaranteed at midnight. For this pilot, each participant should open the app before the cutoff; missing uploads remain unverified.
+The native app remembers each account’s health connection and refreshes on opening, returning to the foreground, changing groups, or choosing Today/Week/Month. It reads the entire selected period from Health Connect / Apple Health through the current time, rather than summing past Stride uploads. Calendar weeks start Monday; calendar months start on the first, all in IST. Group totals start at the later of the period start and the member’s effective date.
+
+`POST /leaderboard/refresh` accepts `{groupId, period, day, from, steps, source, readAt}`. The backend validates membership and the required range, replaces only that member’s latest aggregate for that group/period, and recalculates tied ranks. Native requests include the health read timestamp; delayed older refreshes cannot overwrite a newer snapshot. No raw health samples or daily backfill are uploaded. Latest aggregates are retained for members whose phones are offline, with an Updated timestamp; these are not guaranteed live. Snapshots from a previous week/month are excluded after rollover. Legacy clients and Shortcuts can refresh only their current day total; use the native app for full week/month reads.
+
+Only the latest aggregate per member/group/period is replaced; previous days’ raw samples and daily totals are not written. Legacy `/steps` and `/shortcut/steps` uploads now replace the current day snapshot for active groups, without creating `step_days` rows. Old daily uploads remain readable for historical dates only, never as a fallback for the current week/month. A new period starts at midnight IST (Monday for weeks, the first for months). There is no requirement to open Stride before a cutoff to recover a complete week/month. Daily rewards are paused; existing balances are preserved.
+
+Health providers must contain the requested history and source data. Android now requests read-only history permission as well as steps; ranges longer than 30 days require history access instead of publishing a potentially partial total. Rebuild the Android native app to include the manifest permission and permission-result fix. The installed react-native-health-connect bridge omits history grants from its results, so an idempotent postinstall patch exposes that existing grant without adding a dependency; it fails if the expected upstream code changes. Health Connect history restrictions and Apple Health permissions require physical-device validation; a provider may return less history than its own app displays. Health Connect/Apple Health totals can differ from a vendor app using different sources or deduplication. iOS does not expose read-denial status to the app. Native health access is required for automatic refresh; Safari cannot read HealthKit directly.
 
 ## Verify on devices
 
 1. Install on one Android phone and one iPhone, create separate accounts, and grant read access.
-2. Add recorded steps to Health Connect / Apple Health, tap **Connect health & sync steps**, and confirm matching totals and ranks.
-3. Deny permission and verify the app displays an error rather than uploading a fabricated total.
-4. Disconnect a phone and verify no upload; reconnect and sync before the cutoff.
-5. After 00:30 IST, execute the settlement worker twice and confirm the second reports `alreadySettled`. Check the coin and point totals in the app.
+2. Add recorded steps to Health Connect / Apple Health, tap **Connect health & refresh steps**, and confirm matching totals and ranks.
+3. Deny Android permission and verify an error. On iOS, verify the platform’s unreadable-data behavior (HealthKit conceals read denial and can return no samples).
+4. Disconnect a phone and verify no upload; reconnect and refresh the full selected period.
+5. Skip a day, reopen the native app, and compare Week/Month with the health provider. Verify no new daily upload/result/ledger records are written and the settlement CLI reports that rewards are paused.
 
 The API and settlement tests run locally. Native builds, store signing, and physical HealthKit/Health Connect reads must be checked on actual devices.
 
@@ -73,9 +72,9 @@ The API and settlement tests run locally. Native builds, store signing, and phys
 
 Open the same HTTPS API address in Safari (for the current EC2 pilot, `https://65.1.182.82/`). Create an account or sign in to see the day, week, and month leaderboard. The board refreshes every minute while visible and when Safari comes back into focus.
 
-Expand **Set up iPhone sync** on the page. Generate a dedicated upload token and follow the displayed Shortcuts steps. The token appears only once, expires after 45 days, and can be rotated or revoked. The Shortcut should send `POST /shortcut/steps` with `Authorization: Bearer <upload token>` and JSON `{ "steps": <number> }`; the backend assigns the current IST date and records the source as `healthkit`. You can also send an explicit `day` (`YYYY-MM-DD`) when uploading yesterday during the 00:00–00:29 IST grace period. The upload token cannot access the account or leaderboard endpoints.
+Expand **Set up iPhone sync** on the page. Generate a dedicated upload token and follow the displayed Shortcuts steps. The token appears only once, expires after 45 days, and can be rotated or revoked. The Shortcut should send `POST /shortcut/steps` with `Authorization: Bearer <upload token>` and JSON `{ "steps": <number> }`; the backend assigns the current IST date and records the source as `healthkit`. An explicit `day` must be the current IST date; there is no grace period. The upload token cannot access the account or leaderboard endpoints.
 
-Tap **Sync now** in Safari to run the Shortcut named **Stride Sync**. Set a personal Shortcuts **Time of Day** automation at 11:45 PM IST, daily, **Run Immediately**, with **Run Shortcut → Stride Sync** for automatic uploads. The daily run captures steps as of 11:45 PM; tap Sync now later to include the final minutes. iOS may delay or miss an automation when the phone is off or disconnected, so verify the first daily upload and check the board near the cutoff.
+Tap **Sync now** in Safari to run the Shortcut named **Stride Sync**. Set a personal Shortcuts **Time of Day** automation at 11:45 PM IST, daily, **Run Immediately**, with **Run Shortcut → Stride Sync** for automatic uploads. The daily run captures steps as of 11:45 PM; tap Sync now later to include the final minutes. iOS may delay or miss an automation when the phone is off or disconnected, so verify the first refresh. This Shortcut reads only Today; Safari cannot refresh full week/month data unless those ranges were fetched by the native app.
 
 **Health sample caveat:** a Shortcuts sum of raw Health step samples may differ from Apple Health's displayed total, particularly when Apple Watch and iPhone samples overlap. Compare the first sync with Health and filter the Shortcut to one preferred source if needed. This pilot flow requires manual setup on each iPhone; a web page cannot grant Health access or install the Shortcut on its own.
 

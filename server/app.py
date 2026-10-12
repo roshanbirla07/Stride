@@ -55,6 +55,12 @@ def init():
           user_id INTEGER NOT NULL REFERENCES users(id), day TEXT NOT NULL,
           steps INTEGER NOT NULL, source TEXT NOT NULL, synced_at TEXT NOT NULL,
           PRIMARY KEY(user_id,day));
+        CREATE TABLE IF NOT EXISTS period_totals(
+          group_id INTEGER NOT NULL REFERENCES groups(id),
+          user_id INTEGER NOT NULL REFERENCES users(id), period TEXT NOT NULL,
+          start_day TEXT NOT NULL, through_day TEXT NOT NULL, steps INTEGER NOT NULL,
+          source TEXT NOT NULL, refreshed_at TEXT NOT NULL,
+          PRIMARY KEY(group_id,user_id,period));
         CREATE TABLE IF NOT EXISTS settlements(
           day TEXT PRIMARY KEY, settled_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS results(
@@ -256,15 +262,8 @@ def member_group(uid, group_id):
 
 
 def day_allowed(day, clock):
-    try:
-        parsed = datetime.strptime(day, "%Y-%m-%d").date()
-    except (ValueError, TypeError):
-        raise Problem(400, "Invalid date")
-    today = clock.date()
-    if parsed == today or (parsed == today-timedelta(days=1)
-                           and clock.hour == 0 and clock.minute < 30):
-        return
-    raise Problem(409, "Day is closed or outside the sync window")
+    if not isinstance(day, str) or day != clock.date().isoformat():
+        raise Problem(409, "Day is closed; uploads end at midnight IST")
 
 
 def sync(uid, day, steps, source, clock=None):
@@ -274,11 +273,10 @@ def sync(uid, day, steps, source, clock=None):
         raise Problem(400, "Invalid steps")
     if source not in ("health_connect", "healthkit"):
         raise Problem(400, "Invalid health source")
-    with connect() as db:
-        db.execute("""INSERT INTO step_days(user_id,day,steps,source,synced_at)
-            VALUES(?,?,?,?,?) ON CONFLICT(user_id,day) DO UPDATE SET
-            steps=excluded.steps,source=excluded.source,synced_at=excluded.synced_at""",
-            (uid, day, steps, source, clock.isoformat()))
+    # Compatibility uploads replace only the current day's latest aggregate.
+    for group in groups_for(uid)["groups"]:
+        if group["effectiveDay"] <= day:
+            refresh_total(uid, group["id"], "day", day, day, steps, source)
     return {"day": day, "steps": steps, "syncedAt": clock.isoformat()}
 
 
@@ -288,9 +286,8 @@ def settle(day, clock=None):
         parsed = datetime.strptime(day, "%Y-%m-%d").date()
     except (ValueError, TypeError):
         raise Problem(400, "Invalid date")
-    if parsed >= clock.date() or (parsed == clock.date()-timedelta(days=1)
-                                   and clock.hour == 0 and clock.minute < 30):
-        raise Problem(409, "Wait until the 12:30 AM IST cutoff")
+    if parsed >= clock.date():
+        raise Problem(409, "Wait until midnight IST")
     with connect() as db:
         db.execute("BEGIN IMMEDIATE")
         pending = db.execute("""SELECT DISTINCT m.group_id FROM group_members m
@@ -337,7 +334,7 @@ def settle(day, clock=None):
             "groupsSettled": len(pending), "verified": verified_total}
 
 
-def leaderboard(period, day, uid, group_id=None):
+def period_range(period, day):
     if period not in ("day", "week", "month"):
         raise Problem(400, "Invalid period")
     try:
@@ -348,14 +345,66 @@ def leaderboard(period, day, uid, group_id=None):
         raise Problem(400, "Future date")
     start = target if period == "day" else (
         target-timedelta(days=target.weekday()) if period == "week" else target.replace(day=1))
+    return start, target
+
+
+def refresh_total(uid, group_id, period, day, from_day, steps, source, read_at=None):
+    start, target = period_range(period, day)
+    if day != now_ist().date().isoformat():
+        raise Problem(409, "Refresh the current period")
+    try:
+        sampled = datetime.fromisoformat(read_at) if read_at is not None else now_ist()
+        if sampled.tzinfo is None:
+            raise ValueError()
+        sampled = sampled.astimezone(IST)
+        if sampled.date().isoformat() != day or sampled > now_ist():
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise Problem(400, "Invalid health read time; check the phone clock")
+    group_id = member_group(uid, group_id)
+    if source not in ("health_connect", "healthkit"):
+        raise Problem(400, "Invalid health source")
+    with connect() as db:
+        effective = db.execute("SELECT effective_day FROM group_members WHERE group_id=? AND user_id=?",
+                               (group_id, uid)).fetchone()["effective_day"]
+        expected_from = max(start.isoformat(), effective)
+        if expected_from > day or from_day != expected_from:
+            raise Problem(409, "Refresh from the active membership date")
+        days = (target-datetime.strptime(expected_from, "%Y-%m-%d").date()).days+1
+        if type(steps) is not int or not 0 <= steps <= MAX_STEPS * days:
+            raise Problem(400, "Invalid steps")
+        db.execute("""INSERT INTO period_totals VALUES(?,?,?,?,?,?,?,?)
+            ON CONFLICT(group_id,user_id,period) DO UPDATE SET
+            start_day=excluded.start_day,through_day=excluded.through_day,
+            steps=excluded.steps,source=excluded.source,refreshed_at=excluded.refreshed_at
+            WHERE excluded.refreshed_at>=period_totals.refreshed_at""",
+            (group_id, uid, period, start.isoformat(), day, steps, source, sampled.isoformat()))
+    return leaderboard(period, day, uid, group_id)
+
+
+def leaderboard(period, day, uid, group_id=None):
+    start, target = period_range(period, day)
     group_id = member_group(uid, group_id)
     with connect() as db:
-        rows = db.execute("""SELECT u.id,u.name,SUM(s.steps) steps,MAX(s.synced_at) last_sync
-            FROM step_days s JOIN users u ON u.id=s.user_id
-            JOIN group_members m ON m.user_id=s.user_id AND m.group_id=?
-            WHERE s.day BETWEEN ? AND ? AND s.day>=m.effective_day
-            GROUP BY u.id ORDER BY steps DESC,u.id""",
-            (group_id, start.isoformat(), target.isoformat())).fetchall()
+        rows = []
+        # Legacy daily records are retained for historical access only.
+        if target < now_ist().date():
+            rows = db.execute("""SELECT u.id,u.name,SUM(s.steps) steps,MAX(s.synced_at) last_sync
+                FROM step_days s JOIN users u ON u.id=s.user_id
+                JOIN group_members m ON m.user_id=s.user_id AND m.group_id=?
+                WHERE s.day BETWEEN ? AND ? AND s.day>=m.effective_day
+                GROUP BY u.id ORDER BY steps DESC,u.id""",
+                (group_id, start.isoformat(), target.isoformat())).fetchall()
+        # Prefer full-period provider totals over potentially incomplete daily uploads.
+        snapshots = db.execute("""SELECT u.id,u.name,p.steps,p.refreshed_at last_sync,
+            p.through_day through FROM period_totals p JOIN users u ON u.id=p.user_id
+            JOIN group_members m ON m.user_id=p.user_id AND m.group_id=p.group_id
+            WHERE p.group_id=? AND p.period=? AND p.start_day=?
+            AND p.through_day<=? AND m.effective_day<=?""",
+            (group_id, period, start.isoformat(), day, day)).fetchall()
+        combined = {r["id"]: dict(r, through=day) for r in rows}
+        combined.update({r["id"]: dict(r) for r in snapshots})
+        rows = sorted(combined.values(), key=lambda r: (-r["steps"], r["id"]))
         settled = bool(db.execute("SELECT 1 FROM group_settlements WHERE group_id=? AND day=?",
                                   (group_id, day)).fetchone())
         wallet = db.execute("""SELECT COALESCE(SUM(points),0) points,
@@ -364,7 +413,7 @@ def leaderboard(period, day, uid, group_id=None):
     return {"groupId": group_id, "period": period, "from": start.isoformat(), "through": day,
             "settled": settled if period == "day" else False, "wallet": dict(wallet),
             "entries": [{"rank": 1+sum(x["steps"] > r["steps"] for x in rows), "id": r["id"],
-                         "name": r["name"], "steps": r["steps"], "lastSync": r["last_sync"]}
+                         "name": r["name"], "steps": r["steps"], "lastSync": r["last_sync"], "through": r["through"]}
                         for r in rows]}
 
 
@@ -415,6 +464,10 @@ class Handler(BaseHTTPRequestHandler):
                     steps = int(steps)
                 return self.reply(200, sync(uid, day, steps, "healthkit"))
             user = auth(self.headers.get("Authorization", ""))
+            if path.path == "/leaderboard/refresh":
+                return self.reply(200, refresh_total(user["id"], body.get("groupId"),
+                    body.get("period"), body.get("day"), body.get("from"),
+                    body.get("steps"), body.get("source"), body.get("readAt")))
             if path.path == "/steps":
                 return self.reply(200, sync(user["id"], body.get("day"), body.get("steps"), body.get("source")))
             if path.path == "/shortcut/token":
@@ -473,8 +526,7 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     init()
     if len(sys.argv) > 1 and sys.argv[1] == "settle":
-        print(json.dumps(settle(sys.argv[2] if len(sys.argv)>2 else
-                                (now_ist().date()-timedelta(days=1)).isoformat())))
+        sys.exit("Daily settlement is paused: latest-only totals do not retain historical daily results. Disable the settlement timer.")
     else:
         port = int(os.environ.get("PORT", "8000"))
         print(f"Stride API listening on {port}")

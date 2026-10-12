@@ -1,7 +1,7 @@
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {AppState, Pressable, SafeAreaView, ScrollView, Share, StatusBar, StyleSheet, Text, TextInput, View} from 'react-native';
 import {authorize, readSteps, source} from './health';
-import {board, credentials, getApiUrl, setApiUrl, logout, savedUser, upload, Board, groups as listGroups, createGroup, joinGroup, rotateGroupCode, Group} from './api';
+import {board, credentials, getApiUrl, setApiUrl, logout, savedUser, refreshTotal, healthConnected, rememberHealth, Board, groups as listGroups, createGroup, joinGroup, rotateGroupCode, Group} from './api';
 
 type Period = 'day'|'week'|'month';
 const pad=(n:number)=>String(n).padStart(2,'0');
@@ -29,12 +29,43 @@ export default function App(){
   const [message,setMessage]=useState('Connect your steps to join the leaderboard');
   const [busy,setBusy]=useState(false);
   const [connected,setConnected]=useState(false);
-  const refresh=useCallback(async(p:Period=period)=>{
-    if(user && groupId) setData(await board(p,dayString(),groupId));
-    else setData(null);
-  },[user,period,groupId]);
+  const [refreshing,setRefreshing]=useState(false);
+  const requestId=useRef(0);
+  const refresh=useCallback(async()=>{
+    const id=++requestId.current;
+    if(!user || !groupId){setData(null);setRefreshing(false);return;}
+    setRefreshing(true);
+    try{
+      const day=dayString();
+      let result=await board(period,day,groupId);
+      if(connected){
+        const group=groupList.find(g=>g.id===groupId);
+        const from=group && group.effectiveDay>result.from?group.effectiveDay:result.from;
+        if(from<=day){
+          const [start]=range(from);
+          const end=new Date();
+          const steps=await readSteps(start,end);
+          if(id!==requestId.current)return;
+          result=await refreshTotal(period,day,from,groupId,steps,source,end.toISOString());
+          if(id===requestId.current)setMessage(`Updated from health · ${end.toLocaleTimeString()}`);
+        }
+      }
+      if(id===requestId.current)setData(result);
+    }catch(e){if(id===requestId.current)setMessage(e instanceof Error?e.message:'Refresh failed. Try again.');}
+    finally{if(id===requestId.current)setRefreshing(false);}
+  },[user,period,groupId,groupList,connected]);
   useEffect(()=>{getApiUrl().then(setApiUrlInput).then(()=>savedUser().then(setUser)).catch(()=>{});},[]);
-  useEffect(()=>{refresh().catch(e=>setMessage(e.message));},[refresh]);
+  useEffect(()=>{
+    let active=true;
+    setConnected(false);
+    if(user)healthConnected(user.id).then(value=>{if(active)setConnected(value);}).catch(e=>setMessage(e.message));
+    return()=>{active=false;};
+  },[user]);
+  useEffect(()=>{
+    setData(null);
+    void refresh();
+    return()=>{++requestId.current;};
+  },[refresh]);
   useEffect(()=>{
     if(!user){setGroupList([]);setGroupId(null);return;}
     listGroups().then(result=>{
@@ -63,30 +94,20 @@ export default function App(){
   const selectedGroup=groupList.find(g=>g.id===groupId);
 
   async function sync(){
-    if(!user || busy)return;
+    if(!user || busy || refreshing)return;
     setBusy(true);
     try{
       await authorize();
-      setConnected(true);
-      const day=dayString();
-      const [start,end]=range(day);
-      const steps=await readSteps(start,new Date(Math.min(end.getTime(),Date.now())));
-      await upload(day,steps,source);
-      // Yesterday remains open for thirty minutes after midnight IST.
-      const n=istNow();
-      if(n.getUTCHours()===0 && n.getUTCMinutes()<30){
-        const yesterday=dayString(-1),[s,e]=range(yesterday);
-        await upload(yesterday,await readSteps(s,e),source);
-      }
-      setMessage(`Synced ${steps.toLocaleString()} steps · ${new Date().toLocaleTimeString()}`);
-      await refresh();
-    }catch(e){setMessage(e instanceof Error?e.message:'Sync failed');}
+      await rememberHealth(user.id);
+      if(connected)await refresh();
+      else setConnected(true);
+    }catch(e){setMessage(e instanceof Error?e.message:'Could not connect health');}
     finally{setBusy(false);}
   }
   useEffect(()=>{
-    const sub=AppState.addEventListener('change',state=>{if(state==='active'&&user&&connected)sync();});
+    const sub=AppState.addEventListener('change',state=>{if(state==='active')void refresh();});
     return()=>sub.remove();
-  },[user,connected,busy]);
+  },[refresh]);
 
   async function signIn(){
     setBusy(true);
@@ -123,12 +144,12 @@ export default function App(){
         </View>}
       </View>
       <View style={s.tabs}>{(['day','week','month'] as Period[]).map(p=><Pressable key={p} onPress={()=>setPeriod(p)} style={[s.tab,period===p&&s.selected]}><Text style={[s.tabText,period===p&&s.selectedText]}>{p==='day'?'Today':p==='week'?'Week':'Month'}</Text></Pressable>)}</View>
-      <View style={s.hero}><Text style={s.heroLabel}>YOUR STEPS {period.toUpperCase()}</Text><Text style={s.heroNumber}>{(mine?.steps||0).toLocaleString()}</Text><Text style={s.heroSub}>{mine?'Rank #'+mine.rank+' · keep it up':'Connect and sync to join'}</Text><Text style={s.arrow}>↗</Text></View>
+      <View style={s.hero}><Text style={s.heroLabel}>YOUR STEPS {period.toUpperCase()}</Text><Text style={s.heroNumber}>{refreshing?'…':mine?mine.steps.toLocaleString():'—'}</Text><Text style={s.heroSub}>{mine?'Rank #'+mine.rank+' · keep it up':'Connect health to appear here'}</Text><Text style={s.arrow}>↗</Text></View>
       <Text style={s.sync}>{message}</Text>
-      <Pressable style={s.primary} onPress={sync} disabled={busy}><Text style={s.primaryText}>{busy?'Syncing…':connected?'Sync steps again':'Connect health & sync steps'}</Text></Pressable>
+      <Pressable style={s.primary} onPress={sync} disabled={busy||refreshing}><Text style={s.primaryText}>{busy||refreshing?'Refreshing…':connected?'Refresh steps':'Connect health & refresh steps'}</Text></Pressable>
       <View style={s.headline}><Text style={s.section}>Leaderboard</Text><Text style={s.wallet}>🪙 {data?.wallet.coins||0} · {data?.wallet.points||0} pts</Text></View>
-      {data?.entries.length?data.entries.map((entry)=><View key={entry.id} style={[s.row,entry.id===user.id&&s.myRow]}><Text style={s.rank}>{String(entry.rank).padStart(2,'0')}</Text><View style={s.smallAvatar}><Text style={s.smallAvatarText}>{entry.name.slice(0,2).toUpperCase()}</Text></View><Text style={s.person}>{entry.id===user.id?'You':entry.name}</Text><Text style={s.count}>{entry.steps.toLocaleString()}<Text style={s.unit}> steps</Text></Text></View>):<Text style={s.muted}>No verified uploads yet. Sync to appear here.</Text>}
-      <Text style={s.note}>Day closes at midnight IST. Uploads accepted until 12:30 AM; then results are final. Unsynced users are unverified.</Text>
+      {data?.entries.length?data.entries.map((entry)=><View key={entry.id} style={[s.row,entry.id===user.id&&s.myRow]}><Text style={s.rank}>{String(entry.rank).padStart(2,'0')}</Text><View style={s.smallAvatar}><Text style={s.smallAvatarText}>{entry.name.slice(0,2).toUpperCase()}</Text></View><View style={s.personDetails}><Text style={s.personName}>{entry.id===user.id?'You':entry.name}</Text><Text style={s.sync}>Updated {new Date(entry.lastSync).toLocaleString()}</Text></View><Text style={s.count}>{entry.steps.toLocaleString()}<Text style={s.unit}> steps</Text></Text></View>):<Text style={s.muted}>No totals available. Connect health and refresh to appear here.</Text>}
+      <Text style={s.note}>Day closes at midnight IST. Totals refresh from health for the selected day, week or month. Daily rewards are paused.</Text>
       <Pressable onPress={async()=>{await logout();setUser(null);setData(null);setConnected(false);}}><Text style={s.signOut}>Sign out</Text></Pressable>
     </>}
   </ScrollView></SafeAreaView>
@@ -141,7 +162,7 @@ const s=StyleSheet.create({
   tabs:{flexDirection:'row',backgroundColor:C.panel,borderRadius:14,padding:4,marginTop:24,marginBottom:18},tab:{flex:1,alignItems:'center',padding:10,borderRadius:10},selected:{backgroundColor:C.lime},tabText:{color:C.muted,fontWeight:'800'},selectedText:{color:'#192417'},
   hero:{backgroundColor:C.purple,borderRadius:20,padding:20,minHeight:156,overflow:'hidden'},heroLabel:{color:'#ded2ff',fontWeight:'800',fontSize:11,letterSpacing:1},heroNumber:{color:'white',fontWeight:'900',fontSize:50,letterSpacing:-2,marginTop:4},heroSub:{color:'#e7ddff',fontSize:12},arrow:{position:'absolute',right:9,bottom:-28,color:'#a1ff70',fontSize:100,fontWeight:'200',opacity:.8},
   sync:{color:C.muted,marginTop:12,fontSize:12},headline:{flexDirection:'row',justifyContent:'space-between',alignItems:'center',marginTop:28,marginBottom:10},section:{color:C.text,fontWeight:'900',fontSize:19},wallet:{color:C.lime,fontSize:12,fontWeight:'800'},
-  row:{flexDirection:'row',alignItems:'center',backgroundColor:C.panel,borderRadius:13,padding:12,marginBottom:8,borderWidth:1,borderColor:C.line},myRow:{borderColor:C.lime},rank:{color:C.muted,width:30,fontWeight:'800'},smallAvatar:{width:32,height:32,borderRadius:16,backgroundColor:'#38475d',alignItems:'center',justifyContent:'center'},smallAvatarText:{color:C.text,fontSize:10,fontWeight:'800'},person:{color:C.text,fontWeight:'800',flex:1,marginLeft:10},count:{color:C.text,fontWeight:'900'},unit:{fontSize:10,fontWeight:'400',color:C.muted},
+  row:{flexDirection:'row',alignItems:'center',backgroundColor:C.panel,borderRadius:13,padding:12,marginBottom:8,borderWidth:1,borderColor:C.line},myRow:{borderColor:C.lime},rank:{color:C.muted,width:30,fontWeight:'800'},smallAvatar:{width:32,height:32,borderRadius:16,backgroundColor:'#38475d',alignItems:'center',justifyContent:'center'},smallAvatarText:{color:C.text,fontSize:10,fontWeight:'800'},personDetails:{flex:1,marginLeft:10},personName:{color:C.text,fontWeight:'800'},count:{color:C.text,fontWeight:'900'},unit:{fontSize:10,fontWeight:'400',color:C.muted},
   note:{color:C.muted,fontSize:11,lineHeight:17,marginTop:16},signOut:{color:C.muted,textAlign:'center',marginTop:28}
   ,groupPanel:{backgroundColor:C.panel,borderRadius:14,padding:14,marginTop:20,borderWidth:1,borderColor:C.line},groupHeader:{flexDirection:'row',justifyContent:'space-between',alignItems:'center'},groupChip:{borderWidth:1,borderColor:C.line,borderRadius:20,paddingHorizontal:15,paddingVertical:9,marginRight:8,marginTop:10},groupChipActive:{backgroundColor:C.lime,borderColor:C.lime},groupChipText:{color:C.text,fontWeight:'800'},groupChipTextActive:{color:'#192417'},linkInline:{color:C.lime,fontWeight:'800',paddingVertical:8},secondary:{backgroundColor:'#35465d',borderRadius:10,padding:12,alignItems:'center',marginTop:8},secondaryText:{color:C.text,fontWeight:'800'}
 });

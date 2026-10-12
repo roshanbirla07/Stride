@@ -55,9 +55,9 @@
           <li>Run the Shortcut once, allow network access, then return here and tap refresh if needed. Compare the step total with Apple Health before using the rankings.</li>
         </ol>
         <div class="automation"><strong>Automatic daily upload</strong><p>Shortcuts → Automation → + → Time of Day → Daily at <strong>11:45 PM IST</strong> → Run Immediately → Run Shortcut → Stride Sync. Keep the iPhone on and connected. iOS controls when the automation runs; check the board after the first night.</p></div>
-        <p class="hint">If iPhone and Apple Watch both record steps, a raw sample sum can count overlapping samples. Check the first upload against Health; filter to your preferred source if totals differ. Uploaded totals replace earlier uploads for the same day. Days close at midnight IST; yesterday's upload is accepted until 12:30 AM IST only if the Shortcut supplies a <code>day</code> value for yesterday.</p>
+        <p class="hint">If iPhone and Apple Watch both record steps, a raw sample sum can count overlapping samples. Check the first upload against Health; filter to your preferred source if totals differ. Uploaded totals replace earlier uploads for the same day. Days close at midnight IST; yesterday’s uploads are rejected. Safari uses Shortcut uploads; install the native app for full-period health refresh.</p>
       </div></details>
-      <footer><p>Results finalize at 12:30 AM IST. Unverified users do not enter the leaderboard.</p><button id="sign-out" class="text-button">Sign out</button></footer>
+      <footer><p>Day ranges end at midnight IST. Rankings use latest totals; daily rewards are paused.</p><button id="sign-out" class="text-button">Sign out</button></footer>
     </section>
   </main>
 </body>

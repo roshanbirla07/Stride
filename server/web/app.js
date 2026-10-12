@@ -91,19 +91,20 @@ async function refresh() {
     setText('coins', fmt(board.wallet.coins));
     setText('points', fmt(board.wallet.points));
     const mine = board.entries.find(entry => entry.id === state.user.id);
-    setText('my-steps', fmt(mine?.steps));
+    setText('my-steps', mine ? fmt(mine.steps) : '—');
     setText('hero-note', mine ? `#${mine.rank} in your crew` : 'Sync to join your crew');
-    setText('sync-status', mine ? `Last upload ${new Date(mine.lastSync).toLocaleString()}` : 'No verified upload for this period');
+    setText('sync-status', mine ? `Last upload ${new Date(mine.lastSync).toLocaleString()}` : 'No refreshed total for this period');
     const entries = $('entries');
     entries.replaceChildren();
     if (!board.entries.length) {
       const empty = document.createElement('p'); empty.className = 'muted';
-      empty.textContent = 'No verified uploads yet. Sync to appear here.'; entries.append(empty);
+      empty.textContent = 'No refreshed totals yet. Sync to appear here.'; entries.append(empty);
     }
     board.entries.forEach(entry => {
       const row = document.createElement('div'); row.className = 'entry';
       const rank = document.createElement('span'); rank.className = 'rank'; rank.textContent = `#${entry.rank}`;
       const name = document.createElement('strong'); name.textContent = entry.name + (entry.id === state.user.id ? ' · You' : '');
+      const freshness = document.createElement('small'); freshness.textContent = ` · Updated ${new Date(entry.lastSync).toLocaleString()}`; name.append(freshness);
       const steps = document.createElement('span'); steps.className = 'steps'; steps.textContent = `${fmt(entry.steps)} steps`;
       row.append(rank, name, steps); entries.append(row);
     });

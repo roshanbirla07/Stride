@@ -50,12 +50,87 @@ class CoreFlow(unittest.TestCase):
 
     def test_sync_cutoff(self):
         day = "2026-09-30"
-        app.sync(self.ids[0], day, 123, "healthkit", datetime(2026, 10, 1, 0, 29, tzinfo=IST))
+        with app.connect() as db:
+            db.execute("UPDATE group_members SET effective_day=?", (day,))
+        from unittest.mock import patch
+        with patch.object(app, "now_ist", return_value=datetime(2026, 9, 30, 23, 59, 59, tzinfo=IST)):
+            app.sync(self.ids[0], day, 123, "healthkit")
         with self.assertRaises(app.Problem):
-            app.sync(self.ids[0], day, 999, "healthkit", datetime(2026, 10, 1, 0, 30, tzinfo=IST))
+            app.sync(self.ids[0], day, 999, "healthkit", datetime(2026, 10, 1, 0, 0, tzinfo=IST))
         with self.assertRaises(app.Problem):
-            app.settle(day, datetime(2026, 10, 1, 0, 29, tzinfo=IST))
-        self.assertFalse(app.settle(day, datetime(2026, 10, 1, 0, 30, tzinfo=IST))["alreadySettled"])
+            app.settle(day, datetime(2026, 9, 30, 23, 59, 59, tzinfo=IST))
+        self.assertFalse(app.settle(day, datetime(2026, 10, 1, 0, 0, tzinfo=IST))["alreadySettled"])
+
+    def test_full_period_total_replaces_missing_days_and_can_decrease(self):
+        day = app.now_ist().date().isoformat()
+        uid = self.ids[0]
+        app.sync(uid, day, 123, "healthkit")
+        for period in ("day", "week", "month"):
+            start, _ = app.period_range(period, day)
+            with app.connect() as db:
+                effective = db.execute("SELECT effective_day FROM group_members WHERE user_id=? AND group_id=?",
+                                       (uid, self.gid)).fetchone()[0]
+            first = max(start.isoformat(), effective)
+            total = 700 if period == "day" else 17000
+            board = app.refresh_total(uid, self.gid, period, day, first, total, "healthkit")
+            self.assertEqual(board["entries"][0]["steps"], total)
+            board = app.refresh_total(uid, self.gid, period, day, first, 50, "healthkit")
+            self.assertEqual(board["entries"][0]["steps"], 50)
+        with app.connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM period_totals").fetchone()[0], 3)
+            self.assertEqual(db.execute("SELECT count(*) FROM step_days").fetchone()[0], 0)
+
+    def test_period_snapshot_ties_membership_and_rollover(self):
+        from unittest.mock import patch
+        clock = datetime(2026, 10, 12, 15, tzinfo=IST)  # Monday
+        with patch.object(app, "now_ist", return_value=clock):
+            with app.connect() as db:
+                db.execute("UPDATE group_members SET effective_day='2026-10-02'")
+            for uid in self.ids[:2]:
+                app.refresh_total(uid, self.gid, "month", "2026-10-12", "2026-10-02", 5000, "healthkit")
+            board = app.leaderboard("month", "2026-10-12", self.ids[0], self.gid)
+            self.assertEqual([e["rank"] for e in board["entries"]], [1, 1])
+            self.assertEqual(board["from"], "2026-10-01")
+            self.assertEqual(board["entries"][0]["through"], "2026-10-12")
+            self.assertEqual(app.period_range("week", "2026-10-12")[0].isoformat(), "2026-10-12")
+            with self.assertRaises(app.Problem):
+                app.refresh_total(self.ids[0], self.gid, "month", "2026-10-12", "2026-10-01", 100, "healthkit")
+            with self.assertRaises(app.Problem):
+                app.refresh_total(self.ids[0], self.gid, "day", "2026-10-12", "2026-10-12", True, "healthkit")
+        with patch.object(app, "now_ist", return_value=datetime(2026, 11, 1, 0, tzinfo=IST)):
+            self.assertEqual(app.leaderboard("month", "2026-11-01", self.ids[0], self.gid)["entries"], [])
+
+    def test_delayed_refresh_does_not_overwrite_newer_total(self):
+        from unittest.mock import patch
+        clock = datetime(2026, 10, 12, 15, tzinfo=IST)
+        with patch.object(app, "now_ist", return_value=clock):
+            with app.connect() as db:
+                db.execute("UPDATE group_members SET effective_day='2026-10-01'")
+            app.refresh_total(self.ids[0], self.gid, "day", "2026-10-12", "2026-10-12", 900,
+                              "healthkit", clock.isoformat())
+            board = app.refresh_total(self.ids[0], self.gid, "day", "2026-10-12", "2026-10-12", 500,
+                                      "healthkit", (clock-timedelta(minutes=1)).isoformat())
+            self.assertEqual(board["entries"][0]["steps"], 900)
+
+    def test_latest_day_replaces_previous_day_without_history_writes(self):
+        from unittest.mock import patch
+        with app.connect() as db:
+            db.execute("UPDATE group_members SET effective_day='2026-10-01'")
+        for day, steps in (("2026-10-11", 500), ("2026-10-12", 100)):
+            clock = datetime.fromisoformat(day+"T15:00:00+05:30")
+            with patch.object(app, "now_ist", return_value=clock):
+                app.sync(self.ids[0], day, steps, "healthkit")
+                self.assertEqual(app.leaderboard("day", day, self.ids[0])["entries"][0]["steps"], steps)
+        with app.connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM period_totals").fetchone()[0], 1)
+            for table in ("step_days", "results", "ledger", "group_results", "group_ledger", "group_settlements"):
+                self.assertEqual(db.execute(f"SELECT count(*) FROM {table}").fetchone()[0], 0)
+
+    def test_refresh_requires_group_membership(self):
+        gid = app.create_group(self.ids[0], "Private")["id"]
+        day = app.now_ist().date().isoformat()
+        with self.assertRaises(app.Problem):
+            app.refresh_total(self.ids[1], gid, "day", day, day, 1, "healthkit")
 
     def test_tied_last_no_penalty(self):
         day = (app.now_ist().date()-timedelta(days=2)).isoformat()
