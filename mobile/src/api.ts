@@ -13,7 +13,7 @@ export async function getApiUrl() {
   if (saved) base = saved;
   return base;
 }
-export type Entry = {id:number; name:string; rank:number; steps:number; lastSync:string};
+export type Entry = {id:number; name:string; rank:number; steps:number; lastSync:string; through:string};
 export type Board = {entries:Entry[]; wallet:{points:number; coins:number}; settled:boolean; from:string; through:string};
 export type Group = {id:number;name:string;code:string;ownerId:number|null;effectiveDay:string};
 
@@ -51,10 +51,18 @@ async function withToken(path:string, method='GET', body?:object) {
 export async function board(period:'day'|'week'|'month', day:string, groupId:number):Promise<Board> {
   return withToken('/leaderboard?period='+period+'&day='+day+'&groupId='+groupId);
 }
-export async function upload(day:string, steps:number, source:string) {
-  return withToken('/steps','POST',{day,steps,source});
-}
 export async function groups():Promise<{groups:Group[]}> {return withToken('/groups');}
 export async function createGroup(name:string):Promise<Group> {return withToken('/groups','POST',{name});}
 export async function joinGroup(code:string):Promise<{groups:Group[]}> {return withToken('/groups/join','POST',{code});}
 export async function rotateGroupCode(groupId:number):Promise<{id:number;code:string}> {return withToken('/groups/rotate','POST',{groupId});}
+
+export async function refreshTotal(period:'day'|'week'|'month', day:string, from:string, groupId:number, steps:number, source:string, readAt:string):Promise<Board> {
+  return withToken('/leaderboard/refresh','POST',{period,day,from,groupId,steps,source,readAt});
+}
+
+export async function healthConnected(uid:number) {
+  return (await SecureStore.getItemAsync('stride_health_'+uid)) === 'true';
+}
+export async function rememberHealth(uid:number) {
+  await SecureStore.setItemAsync('stride_health_'+uid, 'true');
+}

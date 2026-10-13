@@ -11,7 +11,7 @@
     },
     "android": {
       "package": "com.roshanbirla.stridepilot",
-      "permissions": ["android.permission.health.READ_STEPS"]
+      "permissions": ["android.permission.health.READ_STEPS", "android.permission.health.READ_HEALTH_DATA_HISTORY"]
     },
     "plugins": [
       "expo-secure-store",
