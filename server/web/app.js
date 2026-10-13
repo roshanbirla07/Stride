@@ -1,8 +1,16 @@
 const $ = id => document.getElementById(id);
-const state = { token: sessionStorage.getItem('strideSession'), user: null, period: 'day', registering: false, groups: [], groupId: null };
+const state = { token: sessionStorage.getItem('strideSession'), user: null, period: 'day', registering: false, groups: [], groupId: null, refreshId: 0 };
 const fmt = n => Number(n || 0).toLocaleString();
 const setText = (id, value) => { $(id).textContent = value; };
-const istDay = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+const istDay = (date = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+const dateLabel = day => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short' }).format(new Date(day+'T00:00:00+05:30'));
+function freshness(timestamp) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return 'Refresh time unavailable';
+  const time = date.toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
+  return `Updated ${istDay(date) === istDay() ? 'today' : dateLabel(istDay(date))} · ${time} IST`;
+}
+function initials(name) { return name.trim().split(/\s+/).map(part => part[0]).slice(0, 2).join('').toUpperCase(); }
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -19,6 +27,10 @@ async function api(path, options = {}) {
 function showAuth() {
   $('dashboard').hidden = true;
   $('auth-panel').hidden = false;
+  $('initials').hidden = true;
+  $('pilot-label').hidden = false;
+  ++state.refreshId;
+  state.user = null;
   state.token = null;
   state.groups = [];
   state.groupId = null;
@@ -31,8 +43,10 @@ async function showDashboard() {
     state.user = await api('/me');
     $('auth-panel').hidden = true;
     $('dashboard').hidden = false;
+    $('initials').hidden = false;
+    $('pilot-label').hidden = true;
     setText('user-name', `${state.user.name.split(' ')[0]}.`);
-    setText('initials', state.user.name.slice(0, 2).toUpperCase());
+    setText('initials', initials(state.user.name));
     setText('today-label', istDay());
     setText('upload-url', `${location.origin}/shortcut/steps`);
     await refreshGroups();
@@ -68,50 +82,91 @@ async function refreshGroups(preferred) {
   $('rotate-group-code').hidden = !group || group.ownerId !== state.user.id;
   setText('group-activation', group && group.effectiveDay > istDay()
     ? `Your results in ${group.name} begin ${group.effectiveDay}. Keep syncing; uploads count once membership starts.`
-    : 'One step upload counts in every active group.');
+    : '');
 }
 
 async function refresh() {
   if (!state.token || !state.user) return;
+  const id = ++state.refreshId;
+  const day = istDay();
+  const requestedGroup = state.groupId;
+  const requestedPeriod = state.period;
+  $('sync-now').disabled = !requestedGroup;
+  setText('period-label', requestedPeriod === 'day' ? 'TODAY' : `THIS ${requestedPeriod.toUpperCase()}`);
+  setText('my-steps', '…');
+  setText('hero-note', 'Updating your rank…');
+  setText('board-message', '');
+  setText('sync-status', 'Refreshing standings…');
+  setText('sync-indicator', '↻');
+  $('sync-indicator').className = 'sync-indicator';
+  $('entries').replaceChildren();
+  $('entries').setAttribute('aria-busy', 'true');
+  document.querySelector('.hero').setAttribute('aria-busy', 'true');
+  $('refresh-board').disabled = true;
+  setText('refresh-board', 'Refreshing…');
   try {
-    const day = istDay();
-    if (!state.groupId) {
+    if (!requestedGroup) {
       setText('range', 'Create or join a group to see a leaderboard.');
-      setText('my-steps', '0'); setText('coins', '0'); setText('points', '0');
-      setText('sync-status', 'Set up your iPhone Shortcut');
-      $('entries').replaceChildren(); return;
+      setText('my-steps', '—');
+      setText('hero-note', 'Your crew starts here');
+      setText('coins', '0'); setText('points', '0');
+      setText('sync-status', 'Create or join a group first');
+      setText('sync-indicator', '—');
+      return;
     }
-    const requestedGroup = state.groupId;
-    const requestedPeriod = state.period;
+    setText('range', `${requestedPeriod === 'day' ? dateLabel(day) : requestedPeriod === 'week' ? 'This week' : 'This month'} · IST`);
     const board = await api(`/leaderboard?period=${requestedPeriod}&day=${day}&groupId=${requestedGroup}`);
-    if (state.groupId !== requestedGroup || state.period !== requestedPeriod) return;
+    if (id !== state.refreshId) return;
     setText('today-label', day);
-    setText('period-label', state.period.toUpperCase());
-    setText('range', board.period === 'day' ? (board.settled ? 'Final results' : 'Live standings') : `${board.from} to ${board.through}`);
+    setText('range', `${dateLabel(board.from)}${board.from.slice(0,4)!==board.through.slice(0,4)?' '+board.from.slice(0,4):''}${board.from === board.through ? '' : ' – '+dateLabel(board.through)} ${day.slice(0,4)} · IST`);
     setText('coins', fmt(board.wallet.coins));
     setText('points', fmt(board.wallet.points));
     const mine = board.entries.find(entry => entry.id === state.user.id);
     setText('my-steps', mine ? fmt(mine.steps) : '—');
-    setText('hero-note', mine ? `#${mine.rank} in your crew` : 'Sync to join your crew');
-    setText('sync-status', mine ? `Last upload ${new Date(mine.lastSync).toLocaleString()}` : 'No refreshed total for this period');
+    const group = state.groups.find(g => g.id === requestedGroup);
+    const pending = group && group.effectiveDay > day;
+    setText('hero-note', mine ? `Rank #${mine.rank} of ${board.entries.length}` : pending ? `Results begin ${dateLabel(group.effectiveDay)}` : 'Refresh your health steps to appear');
+    setText('sync-status', mine ? freshness(mine.lastSync) : 'No health total for this period');
+    const current = mine && istDay(new Date(mine.lastSync)) === day;
+    setText('sync-indicator', current ? '✓' : '—');
+    $('sync-indicator').className = `sync-indicator${current ? ' refreshed' : ''}`;
     const entries = $('entries');
-    entries.replaceChildren();
     if (!board.entries.length) {
-      const empty = document.createElement('p'); empty.className = 'muted';
-      empty.textContent = 'No refreshed totals yet. Sync to appear here.'; entries.append(empty);
+      const empty = document.createElement('p'); empty.className = 'empty-state';
+      empty.textContent = pending ? `Your membership begins ${dateLabel(group.effectiveDay)}. Check back then.` : 'No totals yet. Refresh health steps in the native app, or run your Today Shortcut.';
+      entries.append(empty);
     }
     board.entries.forEach(entry => {
-      const row = document.createElement('div'); row.className = 'entry';
+      const row = document.createElement('div'); row.className = 'entry'+(entry.id === state.user.id ? ' my-entry' : '');
       const rank = document.createElement('span'); rank.className = 'rank'; rank.textContent = `#${entry.rank}`;
-      const name = document.createElement('strong'); name.textContent = entry.name + (entry.id === state.user.id ? ' · You' : '');
-      const freshness = document.createElement('small'); freshness.textContent = ` · Updated ${new Date(entry.lastSync).toLocaleString()}`; name.append(freshness);
-      const steps = document.createElement('span'); steps.className = 'steps'; steps.textContent = `${fmt(entry.steps)} steps`;
-      row.append(rank, name, steps); entries.append(row);
+      const avatar = document.createElement('span'); avatar.className = 'entry-avatar'; avatar.textContent = initials(entry.name); avatar.setAttribute('aria-hidden','true');
+      const person = document.createElement('div'); person.className = 'entry-person';
+      const name = document.createElement('strong'); name.textContent = entry.id === state.user.id ? 'You' : entry.name;
+      const updated = document.createElement('small'); updated.textContent = freshness(entry.lastSync);
+      if (istDay(new Date(entry.lastSync)) < day) updated.className = 'older-total';
+      person.append(name, updated);
+      const steps = document.createElement('div'); steps.className = 'steps';
+      const count = document.createElement('strong'); count.textContent = fmt(entry.steps);
+      const unit = document.createElement('small'); unit.textContent = 'steps'; steps.append(count, unit);
+      row.append(rank, avatar, person, steps); entries.append(row);
     });
-    setText('board-message', '');
-  } catch (error) { setText('board-message', error.message); }
+  } catch (error) {
+    if (id !== state.refreshId) return;
+    setText('my-steps', '—'); setText('hero-note', 'Rank unavailable');
+    setText('sync-status', 'Refresh failed'); setText('sync-indicator', '!');
+    $('sync-indicator').className = 'sync-indicator failed';
+    setText('board-message', `${error.message}. Tap Refresh standings to retry.`);
+  } finally {
+    if (id === state.refreshId) {
+      $('entries').setAttribute('aria-busy', 'false');
+      document.querySelector('.hero').setAttribute('aria-busy', 'false');
+      $('refresh-board').disabled = !state.groupId;
+      setText('refresh-board', 'Refresh standings');
+    }
+  }
 }
 
+$('refresh-board').addEventListener('click', refresh);
 $('group-select').addEventListener('change', event => {
   state.groupId = Number(event.target.value);
   refreshGroups(state.groupId).then(refresh).catch(error => setText('group-message', error.message));
@@ -181,11 +236,11 @@ $('auth-form').addEventListener('submit', async event => {
   finally { button.disabled = false; }
 });
 
-document.querySelectorAll('[data-period]').forEach(button => button.addEventListener('click', () => {
+document.querySelectorAll('[data-period]').forEach(button => { button.setAttribute('aria-pressed', String(button.dataset.period === state.period)); button.addEventListener('click', () => {
   state.period = button.dataset.period;
-  document.querySelectorAll('[data-period]').forEach(tab => tab.classList.toggle('active', tab === button));
+  document.querySelectorAll('[data-period]').forEach(tab => { tab.classList.toggle('active', tab === button); tab.setAttribute('aria-pressed', String(tab === button)); });
   refresh();
-}));
+}); });
 
 $('sync-now').addEventListener('click', () => {
   setText('sync-hint', 'Shortcut opened. Return after it finishes; check the step count above to confirm upload.');

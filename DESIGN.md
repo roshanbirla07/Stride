@@ -10,6 +10,7 @@ colors:
   border: '#324054'
   action: '#baff57'
   hero: '#6f45ff'
+  older-total: '#ffcf95'
 typography:
   sans:
     fontFamily: 'system-ui, sans-serif'
@@ -25,7 +26,7 @@ components:
 
 ## Overview
 
-Stride is a private walking challenge for small groups, used on phones. Preserve the existing sports-scoreboard identity: bold step totals, purple hero and lime selected controls. Product clarity takes precedence over decoration. English copy and IST challenge ranges come from README.md; display times use the device locale. Runtime owners are `mobile/src/App.tsx` (C and s) and `server/web/style.css`; this file documents their established native palette and creates no separate token runtime. No visual rebrand is part of the refresh change.
+Stride is a private walking challenge for small groups, used on phones. Preserve the existing sports-scoreboard identity: bold step totals, purple hero and lime selected controls. Product clarity takes precedence over decoration. English copy and IST challenge ranges come from README.md; health refresh times are explicitly labelled in IST. Runtime owners are `mobile/src/App.tsx` (C and s) and `server/web/style.css`; this file documents their established native palette and creates no separate token runtime. No visual rebrand is part of the refresh change.
 
 ## Colors
 
@@ -37,7 +38,7 @@ Native system fonts keep device readability. Existing bold totals carry hierarch
 
 ## Layout
 
-Keep native safe-area scrolling, 23px content padding, group controls, period tabs, hero and standings in their established order. Refresh timestamps must wrap within the name column rather than displacing step counts.
+Keep native safe-area scrolling, 23px content padding, group controls, period tabs, range caption, hero, health status, refresh action and standings in their established order. The profile initials sit beside the wordmark, and the compact greeting uses real JSX expressions instead of literal backslash-newline text. Refresh timestamps must wrap within the name column rather than displacing step counts.
 
 ## Elevation & Depth
 
@@ -49,7 +50,7 @@ Preserve existing 12px action radius and 20px hero radius. The selected group ch
 
 ## Components
 
-Refresh behavior is owned by App.tsx and the authenticated methods in api.ts; IST ranges and membership validation are owned by server/app.py. Reuse the existing status message and primary button. The button remains present and disabled while refreshing; the hero uses an ellipsis during loading and a dash when no total is available. Failed reads show the error and allow retry. Request generations prevent outdated screen responses replacing the selected period. Each entry exposes its last refresh time; retained offline totals must never be described as live measurements. The web group Select/Listbox is native: server/web/index.html owns the standard select and delegates popup geometry and keyboard behavior to the browser; server/web/app.js handles selection. Existing web controls are retained; Safari's Shortcut limitation is stated beside setup. No new motion or icon system is introduced.
+Refresh behavior is owned by App.tsx and the authenticated methods in api.ts; IST ranges and membership validation are owned by server/app.py. Reuse the existing status message and primary button. The button remains present and disabled while refreshing; the hero uses an ellipsis during loading and a dash when no total is available. Failed reads show the error and allow retry. Request generations prevent outdated screen responses replacing the selected period. Each entry exposes its last refresh time; retained offline totals must never be described as live measurements. The web group Select/Listbox is native: server/web/index.html owns the standard select and delegates popup geometry and keyboard behavior to the browser; server/web/app.js handles selection. The amber older-total colour marks totals recorded before the current IST day. Ranks describe the returned entries (Rank #2 of 5), not all group memberships. Previous rewards are collapsed on web and within group management on native. Period selection is exposed to assistive technology, and web controls retain visible keyboard focus. Existing web controls are retained; Safari's Shortcut limitation is stated beside its Today Shortcut action. A separate Refresh standings button fetches the selected leaderboard without claiming a new health read. No new motion or icon system is introduced.
 
 ## Do's and Don'ts
 
