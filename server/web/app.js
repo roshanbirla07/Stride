@@ -91,6 +91,7 @@ async function refresh() {
   const requestedPeriod = state.period;
   $('sync-now').disabled = !requestedGroup;
   setText('period-label', requestedPeriod === 'day' ? 'TODAY' : `THIS ${requestedPeriod.toUpperCase()}`);
+  setText('member-summary', 'Loading members…');
   setText('my-steps', '…');
   setText('hero-note', 'Updating your rank…');
   setText('board-message', '');
@@ -106,7 +107,7 @@ async function refresh() {
     if (!requestedGroup) {
       setText('range', 'Create or join a group to see a leaderboard.');
       setText('my-steps', '—');
-      setText('hero-note', 'Your crew starts here');
+      setText('hero-note', 'Your crew starts here'); setText('member-summary', 'Create or join your crew');
       setText('coins', '0'); setText('points', '0');
       setText('sync-status', 'Create or join a group first');
       setText('sync-indicator', '—');
@@ -119,36 +120,38 @@ async function refresh() {
     setText('range', `${dateLabel(board.from)}${board.from.slice(0,4)!==board.through.slice(0,4)?' '+board.from.slice(0,4):''}${board.from === board.through ? '' : ' – '+dateLabel(board.through)} ${day.slice(0,4)} · IST`);
     setText('coins', fmt(board.wallet.coins));
     setText('points', fmt(board.wallet.points));
+    const members = board.members || board.entries;
+    setText('member-summary', `${board.entries.length} ranked · ${members.length} members`);
     const mine = board.entries.find(entry => entry.id === state.user.id);
     setText('my-steps', mine ? fmt(mine.steps) : '—');
-    setText('hero-note', mine ? `Rank #${mine.rank} of ${board.entries.length}` : 'Refresh your health steps to appear');
+    setText('hero-note', mine ? `Rank #${mine.rank} of ${board.entries.length} ranked` : 'Refresh your health steps to appear');
     setText('sync-status', mine ? freshness(mine.lastSync) : 'No health total for this period');
     const current = mine && istDay(new Date(mine.lastSync)) === day;
     setText('sync-indicator', current ? '✓' : '—');
     $('sync-indicator').className = `sync-indicator${current ? ' refreshed' : ''}`;
     const entries = $('entries');
-    if (!board.entries.length) {
+    if (!members.length) {
       const empty = document.createElement('p'); empty.className = 'empty-state';
       empty.textContent = 'No totals yet. Refresh health steps in the native app, or run your Today Shortcut.';
       entries.append(empty);
     }
-    board.entries.forEach(entry => {
+    members.forEach(entry => {
       const row = document.createElement('div'); row.className = 'entry'+(entry.id === state.user.id ? ' my-entry' : '');
-      const rank = document.createElement('span'); rank.className = 'rank'; rank.textContent = `#${entry.rank}`;
+      const rank = document.createElement('span'); rank.className = 'rank'; rank.textContent = entry.rank === null ? '—' : `#${entry.rank}`;
       const avatar = document.createElement('span'); avatar.className = 'entry-avatar'; avatar.textContent = initials(entry.name); avatar.setAttribute('aria-hidden','true');
       const person = document.createElement('div'); person.className = 'entry-person';
       const name = document.createElement('strong'); name.textContent = entry.id === state.user.id ? 'You' : entry.name;
-      const updated = document.createElement('small'); updated.textContent = freshness(entry.lastSync);
-      if (istDay(new Date(entry.lastSync)) < day) updated.className = 'older-total';
+      const updated = document.createElement('small'); updated.textContent = entry.lastSync ? freshness(entry.lastSync) : 'Awaiting refresh';
+      if (entry.lastSync && istDay(new Date(entry.lastSync)) < day) updated.className = 'older-total';
       person.append(name, updated);
       const steps = document.createElement('div'); steps.className = 'steps';
-      const count = document.createElement('strong'); count.textContent = fmt(entry.steps);
-      const unit = document.createElement('small'); unit.textContent = 'steps'; steps.append(count, unit);
+      const count = document.createElement('strong'); count.textContent = entry.steps === null ? '—' : fmt(entry.steps);
+      const unit = document.createElement('small'); unit.textContent = 'steps'; steps.append(count); if (entry.steps !== null) steps.append(unit);
       row.append(rank, avatar, person, steps); entries.append(row);
     });
   } catch (error) {
     if (id !== state.refreshId) return;
-    setText('my-steps', '—'); setText('hero-note', 'Rank unavailable');
+    setText('my-steps', '—'); setText('hero-note', 'Rank unavailable'); setText('member-summary', 'Members unavailable');
     setText('sync-status', 'Refresh failed'); setText('sync-indicator', '!');
     $('sync-indicator').className = 'sync-indicator failed';
     setText('board-message', `${error.message}. Tap Refresh standings to retry.`);

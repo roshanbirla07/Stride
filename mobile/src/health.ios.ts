@@ -16,3 +16,7 @@ export async function readSteps(start: Date, end: Date) {
   });
   return Math.round(result.sumQuantity?.quantity ?? 0);
 }
+
+export async function openHealthSettings(): Promise<void> {
+  throw new Error('Health Connect settings are available on Android only');
+}

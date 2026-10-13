@@ -43,7 +43,7 @@
       <button class="primary sync-button" id="sync-now" type="button">↻ &nbsp; Sync today’s steps</button>
       <button class="secondary refresh-button" id="refresh-board" type="button">Refresh standings</button>
       <p id="sync-hint" class="hint">Safari’s Shortcut updates Today only. Use the native app to refresh full Week or Month totals.</p>
-      <section class="leaderboard"><div class="section-title"><h2>Leaderboard</h2></div><p class="muted">Latest totals from your crew</p><div id="entries" aria-busy="false"></div><p id="board-message" class="message" role="status"></p></section>
+      <section class="leaderboard"><div class="section-title"><h2>Leaderboard</h2></div><p class="muted" id="member-summary">Latest totals from your crew</p><div id="entries" aria-busy="false"></div><p id="board-message" class="message" role="status"></p></section>
       <details class="setup" id="setup"><summary>Set up iPhone sync <span>↗</span></summary><div class="setup-body">
         <p>One time on your iPhone: make a Shortcut named <strong>Stride Sync</strong>. It reads your Health step samples and uploads today's total to your account.</p>
         <button id="create-token" class="secondary">Generate upload token</button><button id="revoke-token" class="text-button">Revoke token</button>
@@ -60,7 +60,7 @@
         <p class="hint">If iPhone and Apple Watch both record steps, a raw sample sum can count overlapping samples. Check the first upload against Health; filter to your preferred source if totals differ. Uploaded totals replace earlier uploads for the same day. Days close at midnight IST; yesterday’s uploads are rejected. Safari uses Shortcut uploads; install the native app for full-period health refresh.</p>
       </div></details>
       <details class="previous-rewards"><summary>Previous rewards · paused</summary><p><span id="coins">0</span> coins · <span id="points">0</span> points. Existing balances are preserved.</p></details>
-      <footer><p>Rankings use each member’s latest refresh.<br>Day ends at 00:00 IST.</p><button id="sign-out" class="text-button">Sign out</button></footer>
+      <footer><p>All members appear; those awaiting refresh are not ranked.<br>Week starts Sunday. Day ends at 00:00 IST.</p><button id="sign-out" class="text-button">Sign out</button></footer>
     </section>
   </main>
 </body>

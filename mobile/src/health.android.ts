@@ -1,4 +1,4 @@
-import { aggregateRecord, initialize, requestPermission } from 'react-native-health-connect';
+import { aggregateRecord, initialize, requestPermission, openHealthConnectDataManagement } from 'react-native-health-connect';
 
 export const source = 'health_connect';
 let ready = false;
@@ -25,4 +25,8 @@ export async function readSteps(start: Date, end: Date) {
     timeRangeFilter: { operator: 'between', startTime: start.toISOString(), endTime: end.toISOString() }
   });
   return Math.round(result.COUNT_TOTAL ?? 0);
+}
+
+export async function openHealthSettings() {
+  openHealthConnectDataManagement();
 }
