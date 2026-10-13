@@ -14,7 +14,8 @@ export async function getApiUrl() {
   return base;
 }
 export type Entry = {id:number; name:string; rank:number; steps:number; lastSync:string; through:string};
-export type Board = {entries:Entry[]; wallet:{points:number; coins:number}; settled:boolean; from:string; through:string};
+export type Member = {id:number; name:string; rank:number|null; steps:number|null; lastSync:string|null; through:string|null; status:'ranked'|'awaiting_refresh'};
+export type Board = {entries:Entry[]; members?:Member[]; wallet:{points:number; coins:number}; settled:boolean; from:string; through:string};
 export type Group = {id:number;name:string;code:string;ownerId:number|null;effectiveDay:string};
 
 async function request(path:string, method='GET', body?:object, token?:string) {

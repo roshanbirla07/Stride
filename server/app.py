@@ -356,7 +356,7 @@ def period_range(period, day):
     if target > now_ist().date():
         raise Problem(400, "Future date")
     start = target if period == "day" else (
-        target-timedelta(days=target.weekday()) if period == "week" else target.replace(day=1))
+        target-timedelta(days=(target.weekday()+1)%7) if period == "week" else target.replace(day=1))
     return start, target
 
 
@@ -413,16 +413,27 @@ def leaderboard(period, day, uid, group_id=None):
         combined = {r["id"]: dict(r, through=day) for r in rows}
         combined.update({r["id"]: dict(r) for r in snapshots})
         rows = sorted(combined.values(), key=lambda r: (-r["steps"], r["id"]))
+        roster = db.execute("""SELECT u.id,u.name FROM group_members m
+            JOIN users u ON u.id=m.user_id WHERE m.group_id=? ORDER BY u.name COLLATE NOCASE,u.id""",
+            (group_id,)).fetchall()
         settled = bool(db.execute("SELECT 1 FROM group_settlements WHERE group_id=? AND day=?",
                                   (group_id, day)).fetchone())
         wallet = db.execute("""SELECT COALESCE(SUM(points),0) points,
             COALESCE(SUM(coins),0) coins FROM group_ledger WHERE group_id=? AND user_id=?""",
             (group_id, uid)).fetchone()
+    entries = [{"rank": 1+sum(x["steps"] > r["steps"] for x in rows), "id": r["id"],
+                "name": r["name"], "steps": r["steps"], "lastSync": r["last_sync"], "through": r["through"]}
+               for r in rows]
+    ranked_ids = {entry["id"] for entry in entries}
+    # Keep the ranked-only entries contract for older APKs; expose the full roster separately.
+    members = [dict(entry, status="ranked") for entry in entries]
+    members.extend({"id": member["id"], "name": member["name"], "steps": None, "rank": None,
+                    "lastSync": None, "through": None, "status": "awaiting_refresh"}
+                   for member in roster if member["id"] not in ranked_ids)
     return {"groupId": group_id, "period": period, "from": start.isoformat(), "through": day,
             "settled": settled if period == "day" else False, "wallet": dict(wallet),
-            "entries": [{"rank": 1+sum(x["steps"] > r["steps"] for x in rows), "id": r["id"],
-                         "name": r["name"], "steps": r["steps"], "lastSync": r["last_sync"], "through": r["through"]}
-                        for r in rows]}
+            "entries": entries, "members": members}
+
 
 
 class Handler(BaseHTTPRequestHandler):

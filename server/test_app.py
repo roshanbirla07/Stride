@@ -89,7 +89,7 @@ class CoreFlow(unittest.TestCase):
             self.assertEqual([e["rank"] for e in board["entries"]], [1, 1])
             self.assertEqual(board["from"], "2026-10-01")
             self.assertEqual(board["entries"][0]["through"], "2026-10-12")
-            self.assertEqual(app.period_range("week", "2026-10-12")[0].isoformat(), "2026-10-12")
+            self.assertEqual(app.period_range("week", "2026-10-12")[0].isoformat(), "2026-10-11")
             with self.assertRaises(app.Problem):
                 app.refresh_total(self.ids[0], self.gid, "month", "2026-10-12", "2026-10-02", 100, "healthkit")
             with self.assertRaises(app.Problem):
@@ -130,7 +130,7 @@ class CoreFlow(unittest.TestCase):
             uid = app.register("Newcomer", "new@example.com", "long-password-123")["user"]["id"]
             app.join_group(uid, app.groups_for(self.ids[0])["groups"][0]["code"])
             for period, start, total in (("day", "2026-10-13", 9000),
-                                        ("week", "2026-10-12", 19000),
+                                        ("week", "2026-10-11", 19000),
                                         ("month", "2026-10-01", 99000)):
                 board = app.refresh_total(uid, self.gid, period, "2026-10-13", start, total, "healthkit")
                 self.assertEqual(board["entries"][0]["steps"], total)
@@ -162,6 +162,50 @@ class CoreFlow(unittest.TestCase):
             self.assertEqual([e["id"] for e in entries], [self.ids[0]])
             app.refresh_total(self.ids[1], self.gid, "month", "2026-10-13", "2026-10-01", 100000, "healthkit")
             self.assertEqual(app.leaderboard("month", "2026-10-13", self.ids[1], self.gid)["entries"][0]["id"], self.ids[1])
+
+    def test_all_members_visible_without_fabricated_steps_or_rank(self):
+        day = app.now_ist().date().isoformat()
+        app.refresh_total(self.ids[0], self.gid, "day", day, day, 0, "healthkit")
+        board = app.leaderboard("day", day, self.ids[0], self.gid)
+        self.assertEqual(len(board["entries"]), 1)
+        self.assertEqual(len(board["members"]), 3)
+        ranked = next(m for m in board["members"] if m["id"] == self.ids[0])
+        self.assertEqual(ranked["status"], "ranked")
+        self.assertEqual(ranked["steps"], 0)  # A measured zero remains rankable.
+        self.assertEqual(ranked["rank"], 1)
+        for member in board["members"]:
+            if member["id"] != self.ids[0]:
+                self.assertEqual(member["status"], "awaiting_refresh")
+                self.assertIsNone(member["steps"])
+                self.assertIsNone(member["rank"])
+                self.assertIsNone(member["lastSync"])
+        other = app.create_group(self.ids[0], "Only me")["id"]
+        self.assertEqual(len(app.leaderboard("day", day, self.ids[0], other)["members"]), 1)
+
+    def test_sunday_week_rollover_and_monday_snapshot_needs_refresh(self):
+        from unittest.mock import patch
+        for day, start in (("2026-10-11", "2026-10-11"), ("2026-10-12", "2026-10-11"),
+                           ("2026-10-17", "2026-10-11"), ("2026-10-18", "2026-10-18"),
+                           ("2027-01-01", "2026-12-27")):
+            with patch.object(app, "now_ist", return_value=datetime.fromisoformat(day+"T15:00:00+05:30")):
+                self.assertEqual(app.period_range("week", day)[0].isoformat(), start)
+        clock = datetime(2026, 10, 13, 15, tzinfo=IST)
+        with patch.object(app, "now_ist", return_value=clock):
+            with app.connect() as db:
+                db.execute("INSERT INTO health_totals VALUES(?,?,?,?,?,?,?)", (
+                    self.ids[0], "week", "2026-10-12", "2026-10-13", 21875, "healthkit", clock.isoformat()))
+            board = app.leaderboard("week", "2026-10-13", self.ids[0], self.gid)
+            self.assertEqual(board["entries"], [])
+            self.assertEqual(len(board["members"]), 3)
+            with self.assertRaises(app.Problem):
+                app.refresh_total(self.ids[0], self.gid, "week", "2026-10-13", "2026-10-12", 21875, "healthkit")
+            board = app.refresh_total(self.ids[0], self.gid, "week", "2026-10-13", "2026-10-11", 24562, "healthkit")
+            self.assertEqual(board["from"], "2026-10-11")
+            self.assertEqual(board["entries"][0]["steps"], 24562)
+        with patch.object(app, "now_ist", return_value=datetime(2026, 10, 18, 0, tzinfo=IST)):
+            board = app.leaderboard("week", "2026-10-18", self.ids[0], self.gid)
+            self.assertEqual(board["entries"], [])
+            self.assertTrue(all(m["status"]=="awaiting_refresh" for m in board["members"]))
 
     def test_refresh_requires_group_membership(self):
         gid = app.create_group(self.ids[0], "Private")["id"]

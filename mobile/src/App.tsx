@@ -1,6 +1,6 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
-import {AppState, Pressable, SafeAreaView, ScrollView, Share, StatusBar, StyleSheet, Text, TextInput, View} from 'react-native';
-import {authorize, readSteps, source} from './health';
+import {AppState, Platform, Pressable, SafeAreaView, ScrollView, Share, StatusBar, StyleSheet, Text, TextInput, View} from 'react-native';
+import {authorize, readSteps, source, openHealthSettings} from './health';
 import {board, credentials, getApiUrl, setApiUrl, logout, savedUser, refreshTotal, healthConnected, rememberHealth, Board, groups as listGroups, createGroup, joinGroup, rotateGroupCode, Group} from './api';
 
 type Period = 'day'|'week'|'month';
@@ -27,7 +27,7 @@ function freshness(timestamp:string){
 }
 function periodStart(period:Period){
   const date=istNow();
-  if(period==='week')date.setUTCDate(date.getUTCDate()-(date.getUTCDay()+6)%7);
+  if(period==='week')date.setUTCDate(date.getUTCDate()-date.getUTCDay());
   if(period==='month')date.setUTCDate(1);
   return `${date.getUTCFullYear()}-${pad(date.getUTCMonth()+1)}-${pad(date.getUTCDate())}`;
 }
@@ -136,6 +136,7 @@ export default function App(){
   }
   const mine=data?.entries.find(x=>x.id===user?.id);
   const start=data?.from||periodStart(period),through=data?.through||dayString();
+  const members=data?.members||data?.entries||[];
   const hasCurrentTotal=mine && healthDay(mine.lastSync)===dayString();
   return <SafeAreaView style={s.safe}><StatusBar barStyle="light-content"/><ScrollView contentContainerStyle={s.content}>
     <View style={s.brandRow}><Text style={s.brand}>STRIDE <Text style={s.brandAccent}>●</Text></Text>{user&&<View style={s.avatar}><Text style={s.avatarText}>{initials(user.name)}</Text></View>}</View>
@@ -165,19 +166,21 @@ export default function App(){
       </View>
       <View style={s.tabs}>{(['day','week','month'] as Period[]).map(p=><Pressable key={p} accessibilityRole="button" accessibilityState={{selected:period===p}} onPress={()=>setPeriod(p)} style={[s.tab,period===p&&s.selected]}><Text style={[s.tabText,period===p&&s.selectedText]}>{p==='day'?'Today':p==='week'?'Week':'Month'}</Text></Pressable>)}</View>
       <Text style={s.periodRange}>{dateLabel(start)}{start.slice(0,4)!==through.slice(0,4)?` ${start.slice(0,4)}`:''}{start!==through?` – ${dateLabel(through)}`:''} {through.slice(0,4)} · IST</Text>
-      <View style={s.hero} accessibilityState={{busy:refreshing}}><Text style={s.heroLabel}>YOUR STEPS {period==='day'?'TODAY':`THIS ${period.toUpperCase()}`}</Text><Text style={s.heroNumber}>{refreshing?'…':mine?mine.steps.toLocaleString():'—'}</Text><Text style={s.heroSub}>{refreshing?'Updating your rank…':mine?`Rank #${mine.rank} of ${data?.entries.length}`:groupId?'Refresh your health steps to appear':'Create or join your crew'}</Text><Text style={s.arrow} accessible={false}>↗</Text></View>
+      <View style={s.hero} accessibilityState={{busy:refreshing}}><Text style={s.heroLabel}>YOUR STEPS {period==='day'?'TODAY':`THIS ${period.toUpperCase()}`}</Text><Text style={s.heroNumber}>{refreshing?'…':mine?mine.steps.toLocaleString():'—'}</Text><Text style={s.heroSub}>{refreshing?'Updating your rank…':mine?`Rank #${mine.rank} of ${data?.entries.length} ranked`:groupId?'Refresh your health steps to appear':'Create or join your crew'}</Text><Text style={s.arrow} accessible={false}>↗</Text></View>
       <View style={s.healthPanel}><View style={s.healthDetails}><Text style={s.healthTitle}>{source==='healthkit'?'Apple Health':'Health Connect'}</Text><Text style={[s.healthStatus,refreshError?{color:C.older}:null]} accessibilityLiveRegion="polite">{refreshing?'Refreshing steps…':refreshError?'Refresh failed':mine?freshness(mine.lastSync):connected?'No total for this period':'Connect to read your steps'}</Text></View><Text accessible={false} style={[s.healthBadge,hasCurrentTotal&&!refreshError&&!refreshing?s.healthBadgeFresh:null]}>{refreshing?'↻':refreshError?'!':hasCurrentTotal?'✓':'—'}</Text></View>
+      {source==='health_connect'&&<View><Text style={s.note}>Health Connect combines configured data sources; another fitness app may show a different total.</Text><Pressable accessibilityRole="button" onPress={async()=>{try{await openHealthSettings();}catch(e){setRefreshError(e instanceof Error?e.message:'Could not open Health Connect');}}}><Text style={s.linkInline}>Check Health Connect sources</Text></Pressable></View>}
       {!!refreshError&&<Text style={s.error} accessibilityLiveRegion="polite">{refreshError}. Tap Refresh steps to retry.</Text>}
       <Pressable style={s.primary} accessibilityRole="button" accessibilityState={{disabled:busy||refreshing,busy:busy||refreshing}} onPress={sync} disabled={busy||refreshing}><Text style={s.primaryText}>{busy||refreshing?'Refreshing…':connected?'↻  Refresh steps':'Connect health & refresh steps'}</Text></Pressable>
-      <View style={s.headline}><Text style={s.section}>Leaderboard</Text></View><Text style={s.listCaption}>Latest totals from your crew</Text>
-      {refreshing?<Text style={s.empty}>Loading standings…</Text>:data?.entries.length?data.entries.map(entry=><View key={entry.id} style={[s.row,entry.id===user.id&&s.myRow]}><Text style={s.rank}>#{entry.rank}</Text><View style={[s.smallAvatar,entry.id===user.id?s.myAvatar:null]}><Text style={s.smallAvatarText}>{initials(entry.name)}</Text></View><View style={s.personDetails}><Text style={s.personName}>{entry.id===user.id?'You':entry.name}</Text><Text style={[s.entryTime,healthDay(entry.lastSync)<dayString()?{color:C.older}:null]}>{freshness(entry.lastSync)}</Text></View><View style={s.stepDetails}><Text style={s.count}>{entry.steps.toLocaleString()}</Text><Text style={s.unit}>steps</Text></View></View>):<Text style={s.empty}>{refreshError?'Standings unavailable. Retry the refresh.':groupId?'No totals yet. Refresh health steps to appear here.':'Create a group or join your friends to see standings.'}</Text>}
+      <View style={s.headline}><Text style={s.section}>Leaderboard</Text></View><Text style={s.listCaption}>{data?`${data.entries.length} ranked · ${members.length} members`:"Latest totals from your crew"}</Text>
+      {refreshing?<Text style={s.empty}>Loading standings…</Text>:members.length?members.map(entry=><View key={entry.id} style={[s.row,entry.id===user.id&&s.myRow]}><Text style={s.rank}>{entry.rank!==null?`#${entry.rank}`:'—'}</Text><View style={[s.smallAvatar,entry.id===user.id?s.myAvatar:null]}><Text style={s.smallAvatarText}>{initials(entry.name)}</Text></View><View style={s.personDetails}><Text style={s.personName}>{entry.id===user.id?'You':entry.name}</Text><Text style={[s.entryTime,entry.lastSync&&healthDay(entry.lastSync)<dayString()?{color:C.older}:null]}>{entry.lastSync?freshness(entry.lastSync):'Awaiting refresh'}</Text></View><View style={s.stepDetails}><Text style={s.count}>{entry.steps?.toLocaleString()??'—'}</Text>{entry.steps!==null&&<Text style={s.unit}>steps</Text>}</View></View>):<Text style={s.empty}>{refreshError?'Standings unavailable. Retry the refresh.':'Create a group or join your friends to see standings.'}</Text>}
+      {!!data&&members.length>data.entries.length&&<Text style={s.note}>Members awaiting refresh are not ranked. Open the selected period and refresh health steps to join these standings.</Text>}
       <Text style={s.note}>Rankings use each member’s latest refresh. Day ends at 00:00 IST.</Text>
       <Pressable onPress={async()=>{await logout();setUser(null);setData(null);setConnected(false);}}><Text style={s.signOut}>Sign out</Text></Pressable>
     </>}
   </ScrollView></SafeAreaView>
 }
 const s=StyleSheet.create({
-  safe:{flex:1,backgroundColor:C.bg},content:{padding:23,paddingBottom:50},brand:{color:C.text,fontSize:14,fontWeight:'900',letterSpacing:4},brandAccent:{color:C.lime},
+  safe:{flex:1,backgroundColor:C.bg,paddingTop:Platform.OS==='android'?StatusBar.currentHeight:0},content:{padding:23,paddingBottom:50},brand:{color:C.text,fontSize:14,fontWeight:'900',letterSpacing:4},brandAccent:{color:C.lime},
   auth:{paddingTop:50},title:{color:C.text,fontSize:31,fontWeight:'900',letterSpacing:-1.2,lineHeight:36},muted:{color:C.muted,fontSize:14,marginTop:12},input:{backgroundColor:C.panel,color:C.text,borderRadius:12,padding:16,marginTop:14,borderWidth:1,borderColor:C.line},
   primary:{backgroundColor:C.lime,borderRadius:12,padding:15,alignItems:'center',marginTop:16},primaryText:{color:'#192417',fontWeight:'900',fontSize:14},link:{color:C.lime,textAlign:'center',marginTop:18},notice:{color:C.muted,marginTop:18,lineHeight:20},
   overline:{color:C.muted,fontSize:10,letterSpacing:2,fontWeight:'800',marginBottom:8},avatar:{backgroundColor:C.lime,width:42,height:42,borderRadius:22,alignItems:'center',justifyContent:'center'},avatarText:{fontWeight:'900',color:'#192417'},
