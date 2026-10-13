@@ -80,9 +80,7 @@ async function refreshGroups(preferred) {
   setText('group-code', group?.code ?? '—');
   $('copy-group-code').disabled = !group;
   $('rotate-group-code').hidden = !group || group.ownerId !== state.user.id;
-  setText('group-activation', group && group.effectiveDay > istDay()
-    ? `Your results in ${group.name} begin ${group.effectiveDay}. Keep syncing; uploads count once membership starts.`
-    : '');
+  setText('group-activation', 'Full day, week and month totals count, including steps before joining.');
 }
 
 async function refresh() {
@@ -123,9 +121,7 @@ async function refresh() {
     setText('points', fmt(board.wallet.points));
     const mine = board.entries.find(entry => entry.id === state.user.id);
     setText('my-steps', mine ? fmt(mine.steps) : '—');
-    const group = state.groups.find(g => g.id === requestedGroup);
-    const pending = group && group.effectiveDay > day;
-    setText('hero-note', mine ? `Rank #${mine.rank} of ${board.entries.length}` : pending ? `Results begin ${dateLabel(group.effectiveDay)}` : 'Refresh your health steps to appear');
+    setText('hero-note', mine ? `Rank #${mine.rank} of ${board.entries.length}` : 'Refresh your health steps to appear');
     setText('sync-status', mine ? freshness(mine.lastSync) : 'No health total for this period');
     const current = mine && istDay(new Date(mine.lastSync)) === day;
     setText('sync-indicator', current ? '✓' : '—');
@@ -133,7 +129,7 @@ async function refresh() {
     const entries = $('entries');
     if (!board.entries.length) {
       const empty = document.createElement('p'); empty.className = 'empty-state';
-      empty.textContent = pending ? `Your membership begins ${dateLabel(group.effectiveDay)}. Check back then.` : 'No totals yet. Refresh health steps in the native app, or run your Today Shortcut.';
+      empty.textContent = 'No totals yet. Refresh health steps in the native app, or run your Today Shortcut.';
       entries.append(empty);
     }
     board.entries.forEach(entry => {
@@ -178,7 +174,7 @@ $('create-group-form').addEventListener('submit', async event => {
     const group = await api('/groups', { method: 'POST', body: JSON.stringify({ name: $('new-group-name').value.trim() }) });
     $('new-group-name').value = '';
     await refreshGroups(group.id); await refresh();
-    setText('group-message', `Created ${group.name}. Share code ${group.code}; results begin ${group.effectiveDay}.`);
+    setText('group-message', `Created ${group.name}. Share code ${group.code}; full-period rankings are available now.`);
   } catch (error) { setText('group-message', error.message); }
 });
 $('join-group-form').addEventListener('submit', async event => {
@@ -188,7 +184,7 @@ $('join-group-form').addEventListener('submit', async event => {
     const joined = result.groups.find(g => !state.groups.some(old => old.id === g.id));
     $('join-code').value = '';
     await refreshGroups(joined?.id); await refresh();
-    setText('group-message', `Joined ${joined?.name ?? 'group'}. Your results begin tomorrow.`);
+    setText('group-message', `Joined ${joined?.name ?? 'group'}. Refresh health to see your full-period rank.`);
   } catch (error) { setText('group-message', error.message); }
 });
 $('copy-group-code').addEventListener('click', async () => {

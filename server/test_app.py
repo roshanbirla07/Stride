@@ -67,17 +67,14 @@ class CoreFlow(unittest.TestCase):
         app.sync(uid, day, 123, "healthkit")
         for period in ("day", "week", "month"):
             start, _ = app.period_range(period, day)
-            with app.connect() as db:
-                effective = db.execute("SELECT effective_day FROM group_members WHERE user_id=? AND group_id=?",
-                                       (uid, self.gid)).fetchone()[0]
-            first = max(start.isoformat(), effective)
+            first = start.isoformat()
             total = 700 if period == "day" else 17000
             board = app.refresh_total(uid, self.gid, period, day, first, total, "healthkit")
             self.assertEqual(board["entries"][0]["steps"], total)
             board = app.refresh_total(uid, self.gid, period, day, first, 50, "healthkit")
             self.assertEqual(board["entries"][0]["steps"], 50)
         with app.connect() as db:
-            self.assertEqual(db.execute("SELECT count(*) FROM period_totals").fetchone()[0], 3)
+            self.assertEqual(db.execute("SELECT count(*) FROM health_totals").fetchone()[0], 3)
             self.assertEqual(db.execute("SELECT count(*) FROM step_days").fetchone()[0], 0)
 
     def test_period_snapshot_ties_membership_and_rollover(self):
@@ -87,14 +84,14 @@ class CoreFlow(unittest.TestCase):
             with app.connect() as db:
                 db.execute("UPDATE group_members SET effective_day='2026-10-02'")
             for uid in self.ids[:2]:
-                app.refresh_total(uid, self.gid, "month", "2026-10-12", "2026-10-02", 5000, "healthkit")
+                app.refresh_total(uid, self.gid, "month", "2026-10-12", "2026-10-01", 5000, "healthkit")
             board = app.leaderboard("month", "2026-10-12", self.ids[0], self.gid)
             self.assertEqual([e["rank"] for e in board["entries"]], [1, 1])
             self.assertEqual(board["from"], "2026-10-01")
             self.assertEqual(board["entries"][0]["through"], "2026-10-12")
             self.assertEqual(app.period_range("week", "2026-10-12")[0].isoformat(), "2026-10-12")
             with self.assertRaises(app.Problem):
-                app.refresh_total(self.ids[0], self.gid, "month", "2026-10-12", "2026-10-01", 100, "healthkit")
+                app.refresh_total(self.ids[0], self.gid, "month", "2026-10-12", "2026-10-02", 100, "healthkit")
             with self.assertRaises(app.Problem):
                 app.refresh_total(self.ids[0], self.gid, "day", "2026-10-12", "2026-10-12", True, "healthkit")
         with patch.object(app, "now_ist", return_value=datetime(2026, 11, 1, 0, tzinfo=IST)):
@@ -122,9 +119,49 @@ class CoreFlow(unittest.TestCase):
                 app.sync(self.ids[0], day, steps, "healthkit")
                 self.assertEqual(app.leaderboard("day", day, self.ids[0])["entries"][0]["steps"], steps)
         with app.connect() as db:
-            self.assertEqual(db.execute("SELECT count(*) FROM period_totals").fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT count(*) FROM health_totals").fetchone()[0], 1)
             for table in ("step_days", "results", "ledger", "group_results", "group_ledger", "group_settlements"):
                 self.assertEqual(db.execute(f"SELECT count(*) FROM {table}").fetchone()[0], 0)
+
+    def test_new_member_uses_full_period_and_reuses_totals_across_groups(self):
+        from unittest.mock import patch
+        clock = datetime(2026, 10, 13, 15, tzinfo=IST)
+        with patch.object(app, "now_ist", return_value=clock):
+            uid = app.register("Newcomer", "new@example.com", "long-password-123")["user"]["id"]
+            app.join_group(uid, app.groups_for(self.ids[0])["groups"][0]["code"])
+            for period, start, total in (("day", "2026-10-13", 9000),
+                                        ("week", "2026-10-12", 19000),
+                                        ("month", "2026-10-01", 99000)):
+                board = app.refresh_total(uid, self.gid, period, "2026-10-13", start, total, "healthkit")
+                self.assertEqual(board["entries"][0]["steps"], total)
+                self.assertEqual(board["entries"][0]["rank"], 1)
+            second = app.create_group(self.ids[0], "Home")["id"]
+            code = next(g["code"] for g in app.groups_for(self.ids[0])["groups"] if g["id"]==second)
+            app.join_group(uid, code)
+            self.assertEqual(app.leaderboard("month", "2026-10-13", uid, second)["entries"][0]["steps"], 99000)
+            # Updating through one group changes the user's rank total everywhere.
+            app.refresh_total(uid, second, "month", "2026-10-13", "2026-10-01", 110000, "healthkit")
+            self.assertEqual(app.leaderboard("month", "2026-10-13", uid, self.gid)["entries"][0]["steps"], 110000)
+            with app.connect() as db:
+                self.assertEqual(db.execute("SELECT count(*) FROM health_totals WHERE user_id=?", (uid,)).fetchone()[0], 3)
+                self.assertEqual(db.execute("SELECT count(*) FROM step_days").fetchone()[0], 0)
+                self.assertEqual(db.execute("SELECT count(*) FROM period_totals").fetchone()[0], 0)
+
+    def test_upgrade_imports_only_complete_legacy_snapshots(self):
+        from unittest.mock import patch
+        clock = datetime(2026, 10, 13, 15, tzinfo=IST)
+        with patch.object(app, "now_ist", return_value=clock):
+            with app.connect() as db:
+                db.execute("UPDATE group_members SET effective_day='2026-09-01' WHERE user_id=?", (self.ids[0],))
+                db.execute("UPDATE group_members SET effective_day='2026-10-10' WHERE user_id=?", (self.ids[1],))
+                db.executemany("INSERT INTO period_totals VALUES(?,?,?,?,?,?,?,?)", [
+                    (self.gid, self.ids[0], "month", "2026-10-01", "2026-10-13", 99000, "healthkit", clock.isoformat()),
+                    (self.gid, self.ids[1], "month", "2026-10-01", "2026-10-13", 5000, "healthkit", clock.isoformat())])
+            app.init(); app.init()
+            entries = app.leaderboard("month", "2026-10-13", self.ids[0], self.gid)["entries"]
+            self.assertEqual([e["id"] for e in entries], [self.ids[0]])
+            app.refresh_total(self.ids[1], self.gid, "month", "2026-10-13", "2026-10-01", 100000, "healthkit")
+            self.assertEqual(app.leaderboard("month", "2026-10-13", self.ids[1], self.gid)["entries"][0]["id"], self.ids[1])
 
     def test_refresh_requires_group_membership(self):
         gid = app.create_group(self.ids[0], "Private")["id"]
@@ -185,7 +222,7 @@ class CoreFlow(unittest.TestCase):
             app.leaderboard("day",day,self.ids[2],second)
         self.assertTrue(app.settle(day)["alreadySettled"])
 
-    def test_join_starts_tomorrow_and_code_rotation(self):
+    def test_join_starts_immediately_and_code_rotation(self):
         gid = app.create_group(self.ids[0], "Office")["id"]
         old_code = next(g["code"] for g in app.groups_for(self.ids[0])["groups"] if g["id"]==gid)
         new_code = app.rotate_group_code(self.ids[0],gid)["code"]
@@ -194,7 +231,9 @@ class CoreFlow(unittest.TestCase):
         app.join_group(self.ids[2],new_code)
         today=app.now_ist().date().isoformat()
         app.sync(self.ids[2],today,9000,"healthkit")
-        self.assertEqual(app.leaderboard("day",today,self.ids[2],gid)["entries"],[])
+        self.assertEqual(app.leaderboard("day",today,self.ids[2],gid)["entries"][0]["steps"],9000)
+        joined=next(g for g in app.groups_for(self.ids[2])["groups"] if g["id"]==gid)
+        self.assertEqual(joined["effectiveDay"],today)
         with self.assertRaises(app.Problem):
             app.rotate_group_code(self.ids[2],gid)
 
