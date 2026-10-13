@@ -61,6 +61,11 @@ def init():
           start_day TEXT NOT NULL, through_day TEXT NOT NULL, steps INTEGER NOT NULL,
           source TEXT NOT NULL, refreshed_at TEXT NOT NULL,
           PRIMARY KEY(group_id,user_id,period));
+        CREATE TABLE IF NOT EXISTS health_totals(
+          user_id INTEGER NOT NULL REFERENCES users(id), period TEXT NOT NULL,
+          start_day TEXT NOT NULL, through_day TEXT NOT NULL, steps INTEGER NOT NULL,
+          source TEXT NOT NULL, refreshed_at TEXT NOT NULL,
+          PRIMARY KEY(user_id,period));
         CREATE TABLE IF NOT EXISTS settlements(
           day TEXT PRIMARY KEY, settled_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS results(
@@ -92,6 +97,13 @@ def init():
           kind TEXT NOT NULL, points INTEGER NOT NULL DEFAULT 0,
           coins INTEGER NOT NULL DEFAULT 0, UNIQUE(group_id,user_id,day,kind));
         """)
+        # Only old snapshots read from the period start are safe to reuse.
+        # Restricted pre-join totals must be refreshed instead of presented as full totals.
+        db.execute("""INSERT OR IGNORE INTO health_totals
+            SELECT p.user_id,p.period,p.start_day,p.through_day,p.steps,p.source,p.refreshed_at
+            FROM period_totals p JOIN group_members m
+            ON m.group_id=p.group_id AND m.user_id=p.user_id
+            WHERE m.effective_day<=p.start_day ORDER BY p.refreshed_at DESC""")
         # One-time, idempotent migration of the pilot's original shared challenge.
         if db.execute("SELECT 1 FROM users LIMIT 1").fetchone() and not db.execute(
                 "SELECT 1 FROM groups WHERE id=1").fetchone():
@@ -213,7 +225,7 @@ def create_group(uid, name):
     if not 2 <= len(name) <= 60:
         raise Problem(400, "Group name must be 2–60 characters")
     clock = now_ist()
-    effective = (clock.date() + timedelta(days=1)).isoformat()
+    effective = clock.date().isoformat()
     with connect() as db:
         db.execute("BEGIN IMMEDIATE")
         code = new_group_code(db)
@@ -234,7 +246,7 @@ def join_group(uid, code):
         if db.execute("SELECT 1 FROM group_members WHERE group_id=? AND user_id=?",
                       (row["id"], uid)).fetchone():
             raise Problem(409, "Already in this group")
-        effective = (now_ist().date() + timedelta(days=1)).isoformat()
+        effective = now_ist().date().isoformat()
         db.execute("INSERT INTO group_members VALUES(?,?,?)", (row["id"], uid, effective))
     return groups_for(uid)
 
@@ -274,9 +286,9 @@ def sync(uid, day, steps, source, clock=None):
     if source not in ("health_connect", "healthkit"):
         raise Problem(400, "Invalid health source")
     # Compatibility uploads replace only the current day's latest aggregate.
-    for group in groups_for(uid)["groups"]:
-        if group["effectiveDay"] <= day:
-            refresh_total(uid, group["id"], "day", day, day, steps, source)
+    groups = groups_for(uid)["groups"]
+    if groups:
+        refresh_total(uid, groups[0]["id"], "day", day, day, steps, source)
     return {"day": day, "steps": steps, "syncedAt": clock.isoformat()}
 
 
@@ -365,20 +377,17 @@ def refresh_total(uid, group_id, period, day, from_day, steps, source, read_at=N
     if source not in ("health_connect", "healthkit"):
         raise Problem(400, "Invalid health source")
     with connect() as db:
-        effective = db.execute("SELECT effective_day FROM group_members WHERE group_id=? AND user_id=?",
-                               (group_id, uid)).fetchone()["effective_day"]
-        expected_from = max(start.isoformat(), effective)
-        if expected_from > day or from_day != expected_from:
-            raise Problem(409, "Refresh from the active membership date")
-        days = (target-datetime.strptime(expected_from, "%Y-%m-%d").date()).days+1
+        if from_day != start.isoformat():
+            raise Problem(409, "Refresh the full selected period from its start date")
+        days = (target-start).days+1
         if type(steps) is not int or not 0 <= steps <= MAX_STEPS * days:
             raise Problem(400, "Invalid steps")
-        db.execute("""INSERT INTO period_totals VALUES(?,?,?,?,?,?,?,?)
-            ON CONFLICT(group_id,user_id,period) DO UPDATE SET
+        db.execute("""INSERT INTO health_totals VALUES(?,?,?,?,?,?,?)
+            ON CONFLICT(user_id,period) DO UPDATE SET
             start_day=excluded.start_day,through_day=excluded.through_day,
             steps=excluded.steps,source=excluded.source,refreshed_at=excluded.refreshed_at
-            WHERE excluded.refreshed_at>=period_totals.refreshed_at""",
-            (group_id, uid, period, start.isoformat(), day, steps, source, sampled.isoformat()))
+            WHERE excluded.refreshed_at>=health_totals.refreshed_at""",
+            (uid, period, start.isoformat(), day, steps, source, sampled.isoformat()))
     return leaderboard(period, day, uid, group_id)
 
 
@@ -397,11 +406,10 @@ def leaderboard(period, day, uid, group_id=None):
                 (group_id, start.isoformat(), target.isoformat())).fetchall()
         # Prefer full-period provider totals over potentially incomplete daily uploads.
         snapshots = db.execute("""SELECT u.id,u.name,p.steps,p.refreshed_at last_sync,
-            p.through_day through FROM period_totals p JOIN users u ON u.id=p.user_id
-            JOIN group_members m ON m.user_id=p.user_id AND m.group_id=p.group_id
-            WHERE p.group_id=? AND p.period=? AND p.start_day=?
-            AND p.through_day<=? AND m.effective_day<=?""",
-            (group_id, period, start.isoformat(), day, day)).fetchall()
+            p.through_day through FROM health_totals p JOIN users u ON u.id=p.user_id
+            JOIN group_members m ON m.user_id=p.user_id AND m.group_id=?
+            WHERE p.period=? AND p.start_day=? AND p.through_day<=?""",
+            (group_id, period, start.isoformat(), day)).fetchall()
         combined = {r["id"]: dict(r, through=day) for r in rows}
         combined.update({r["id"]: dict(r) for r in snapshots})
         rows = sorted(combined.values(), key=lambda r: (-r["steps"], r["id"]))

@@ -59,8 +59,7 @@ export default function App(){
       const day=dayString();
       let result=await board(period,day,groupId);
       if(connected){
-        const group=groupList.find(g=>g.id===groupId);
-        const from=group && group.effectiveDay>result.from?group.effectiveDay:result.from;
+        const from=result.from;
         if(from<=day){
           const [start]=range(from);
           const end=new Date();
@@ -100,14 +99,14 @@ export default function App(){
     setGroupId(result.groups.some(g=>g.id===preferred)?preferred!:(result.groups[0]?.id??null));
   }
   async function addGroup(){
-    try{setBusy(true);const created=await createGroup(groupName.trim());setGroupName('');await updateGroups(created.id);setGroupMessage(`Created ${created.name}. Results start ${created.effectiveDay}.`);}
+    try{setBusy(true);const created=await createGroup(groupName.trim());setGroupName('');await updateGroups(created.id);setGroupMessage(`Created ${created.name}. Refresh health to see your full-period rank.`);}
     catch(e){setGroupMessage(e instanceof Error?e.message:'Could not create group');}
     finally{setBusy(false);}
   }
   async function enterGroup(){
     try{setBusy(true);const before=new Set(groupList.map(g=>g.id));const result=await joinGroup(joinCode.trim());
       const joined=result.groups.find(g=>!before.has(g.id));setJoinCode('');await updateGroups(joined?.id);
-      setGroupMessage(`Joined ${joined?.name||'group'}. Results start tomorrow.`);}
+      setGroupMessage(`Joined ${joined?.name||'group'}. Refresh health to see your full-period rank.`);}
     catch(e){setGroupMessage(e instanceof Error?e.message:'Could not join group');}
     finally{setBusy(false);}
   }
@@ -137,7 +136,6 @@ export default function App(){
   }
   const mine=data?.entries.find(x=>x.id===user?.id);
   const start=data?.from||periodStart(period),through=data?.through||dayString();
-  const pending=selectedGroup && selectedGroup.effectiveDay>dayString();
   const hasCurrentTotal=mine && healthDay(mine.lastSync)===dayString();
   return <SafeAreaView style={s.safe}><StatusBar barStyle="light-content"/><ScrollView contentContainerStyle={s.content}>
     <View style={s.brandRow}><Text style={s.brand}>STRIDE <Text style={s.brandAccent}>●</Text></Text>{user&&<View style={s.avatar}><Text style={s.avatarText}>{initials(user.name)}</Text></View>}</View>
@@ -155,7 +153,6 @@ export default function App(){
       <View style={s.groupPanel}><View style={s.groupHeader}><Text style={s.overline}>YOUR GROUPS</Text><Pressable onPress={()=>setManageGroups(!manageGroups)}><Text style={s.linkInline}>{manageGroups?'Done':'Manage'}</Text></Pressable></View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>{groupList.map(g=><Pressable key={g.id} onPress={()=>setGroupId(g.id)} style={[s.groupChip,groupId===g.id&&s.groupChipActive]}><Text style={[s.groupChipText,groupId===g.id&&s.groupChipTextActive]}>{g.name}</Text></Pressable>)}</ScrollView>
         {!groupList.length&&<Text style={s.muted}>Create a group or join your friends with their code.</Text>}
-        {selectedGroup&&selectedGroup.effectiveDay>dayString()&&<Text style={s.muted}>Your results here begin {selectedGroup.effectiveDay}. Keep syncing.</Text>}
         {manageGroups&&<View><Text style={s.note}>Previous rewards · paused: {data?.wallet.coins||0} coins · {data?.wallet.points||0} points</Text><Text style={s.muted}>Invite code: {selectedGroup?.code||'Select a group'}</Text>
           {!!selectedGroup&&<Pressable onPress={()=>Share.share({message:`Join my Stride group ${selectedGroup.name} with code ${selectedGroup.code}`})}><Text style={s.linkInline}>Share code</Text></Pressable>}
           {selectedGroup?.ownerId===user.id&&<Pressable onPress={async()=>{try{await rotateGroupCode(selectedGroup.id);await updateGroups(selectedGroup.id);setGroupMessage('Code regenerated. Share the new code.');}catch(e){setGroupMessage(e instanceof Error?e.message:'Could not rotate code');}}}><Text style={s.linkInline}>Regenerate code</Text></Pressable>}
@@ -168,12 +165,12 @@ export default function App(){
       </View>
       <View style={s.tabs}>{(['day','week','month'] as Period[]).map(p=><Pressable key={p} accessibilityRole="button" accessibilityState={{selected:period===p}} onPress={()=>setPeriod(p)} style={[s.tab,period===p&&s.selected]}><Text style={[s.tabText,period===p&&s.selectedText]}>{p==='day'?'Today':p==='week'?'Week':'Month'}</Text></Pressable>)}</View>
       <Text style={s.periodRange}>{dateLabel(start)}{start.slice(0,4)!==through.slice(0,4)?` ${start.slice(0,4)}`:''}{start!==through?` – ${dateLabel(through)}`:''} {through.slice(0,4)} · IST</Text>
-      <View style={s.hero} accessibilityState={{busy:refreshing}}><Text style={s.heroLabel}>YOUR STEPS {period==='day'?'TODAY':`THIS ${period.toUpperCase()}`}</Text><Text style={s.heroNumber}>{refreshing?'…':mine?mine.steps.toLocaleString():'—'}</Text><Text style={s.heroSub}>{refreshing?'Updating your rank…':mine?`Rank #${mine.rank} of ${data?.entries.length}`:pending?`Results begin ${dateLabel(selectedGroup!.effectiveDay)}`:groupId?'Refresh your health steps to appear':'Create or join your crew'}</Text><Text style={s.arrow} accessible={false}>↗</Text></View>
+      <View style={s.hero} accessibilityState={{busy:refreshing}}><Text style={s.heroLabel}>YOUR STEPS {period==='day'?'TODAY':`THIS ${period.toUpperCase()}`}</Text><Text style={s.heroNumber}>{refreshing?'…':mine?mine.steps.toLocaleString():'—'}</Text><Text style={s.heroSub}>{refreshing?'Updating your rank…':mine?`Rank #${mine.rank} of ${data?.entries.length}`:groupId?'Refresh your health steps to appear':'Create or join your crew'}</Text><Text style={s.arrow} accessible={false}>↗</Text></View>
       <View style={s.healthPanel}><View style={s.healthDetails}><Text style={s.healthTitle}>{source==='healthkit'?'Apple Health':'Health Connect'}</Text><Text style={[s.healthStatus,refreshError?{color:C.older}:null]} accessibilityLiveRegion="polite">{refreshing?'Refreshing steps…':refreshError?'Refresh failed':mine?freshness(mine.lastSync):connected?'No total for this period':'Connect to read your steps'}</Text></View><Text accessible={false} style={[s.healthBadge,hasCurrentTotal&&!refreshError&&!refreshing?s.healthBadgeFresh:null]}>{refreshing?'↻':refreshError?'!':hasCurrentTotal?'✓':'—'}</Text></View>
       {!!refreshError&&<Text style={s.error} accessibilityLiveRegion="polite">{refreshError}. Tap Refresh steps to retry.</Text>}
       <Pressable style={s.primary} accessibilityRole="button" accessibilityState={{disabled:busy||refreshing,busy:busy||refreshing}} onPress={sync} disabled={busy||refreshing}><Text style={s.primaryText}>{busy||refreshing?'Refreshing…':connected?'↻  Refresh steps':'Connect health & refresh steps'}</Text></Pressable>
       <View style={s.headline}><Text style={s.section}>Leaderboard</Text></View><Text style={s.listCaption}>Latest totals from your crew</Text>
-      {refreshing?<Text style={s.empty}>Loading standings…</Text>:data?.entries.length?data.entries.map(entry=><View key={entry.id} style={[s.row,entry.id===user.id&&s.myRow]}><Text style={s.rank}>#{entry.rank}</Text><View style={[s.smallAvatar,entry.id===user.id?s.myAvatar:null]}><Text style={s.smallAvatarText}>{initials(entry.name)}</Text></View><View style={s.personDetails}><Text style={s.personName}>{entry.id===user.id?'You':entry.name}</Text><Text style={[s.entryTime,healthDay(entry.lastSync)<dayString()?{color:C.older}:null]}>{freshness(entry.lastSync)}</Text></View><View style={s.stepDetails}><Text style={s.count}>{entry.steps.toLocaleString()}</Text><Text style={s.unit}>steps</Text></View></View>):<Text style={s.empty}>{refreshError?'Standings unavailable. Retry the refresh.':pending?`Your membership starts ${dateLabel(selectedGroup!.effectiveDay)}. Check back then.`:groupId?'No totals yet. Refresh health steps to appear here.':'Create a group or join your friends to see standings.'}</Text>}
+      {refreshing?<Text style={s.empty}>Loading standings…</Text>:data?.entries.length?data.entries.map(entry=><View key={entry.id} style={[s.row,entry.id===user.id&&s.myRow]}><Text style={s.rank}>#{entry.rank}</Text><View style={[s.smallAvatar,entry.id===user.id?s.myAvatar:null]}><Text style={s.smallAvatarText}>{initials(entry.name)}</Text></View><View style={s.personDetails}><Text style={s.personName}>{entry.id===user.id?'You':entry.name}</Text><Text style={[s.entryTime,healthDay(entry.lastSync)<dayString()?{color:C.older}:null]}>{freshness(entry.lastSync)}</Text></View><View style={s.stepDetails}><Text style={s.count}>{entry.steps.toLocaleString()}</Text><Text style={s.unit}>steps</Text></View></View>):<Text style={s.empty}>{refreshError?'Standings unavailable. Retry the refresh.':groupId?'No totals yet. Refresh health steps to appear here.':'Create a group or join your friends to see standings.'}</Text>}
       <Text style={s.note}>Rankings use each member’s latest refresh. Day ends at 00:00 IST.</Text>
       <Pressable onPress={async()=>{await logout();setUser(null);setData(null);setConnected(false);}}><Text style={s.signOut}>Sign out</Text></Pressable>
     </>}
