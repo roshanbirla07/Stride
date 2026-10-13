@@ -10,11 +10,11 @@
 </head>
 <body>
   <main class="shell">
-    <header><div class="brand">S T R I D E <span class="dot"></span></div><span class="pill">iPhone pilot</span></header>
+    <header><div class="brand">S T R I D E <span class="dot"></span></div><span class="pill" id="pilot-label">Crew challenge</span><div class="avatar" id="initials" hidden></div></header>
     <section id="auth-panel" class="auth-panel">
       <p class="eyebrow">YOUR CREW. YOUR PACE.</p>
       <h1>Make every<br><em>step count.</em></h1>
-      <p class="muted">The private step challenge for your crew. Sign in to see the live standings.</p>
+      <p class="muted">The private step challenge for your crew. Sign in to see your crew’s latest standings.</p>
       <form id="auth-form" class="card">
         <h2 id="auth-title">Sign in</h2>
         <label id="name-wrap" hidden>Name<input id="name" autocomplete="name" maxlength="60"></label>
@@ -26,10 +26,10 @@
       </form>
     </section>
     <section id="dashboard" hidden>
-      <div class="hello"><div><p class="eyebrow">TODAY · <span id="today-label"></span></p><h1>Keep moving,<br><em id="user-name"></em></h1></div><div class="avatar" id="initials"></div></div>
+      <div class="hello"><div><p class="eyebrow">YOUR CREW. YOUR PACE. <span id="today-label" hidden></span></p><h1>Keep moving, <em id="user-name"></em></h1></div></div>
       <section class="group-panel"><div class="group-head"><label for="group-select">YOUR GROUP</label><button id="group-options" class="text-button" type="button">Manage groups</button></div>
         <select id="group-select" aria-label="Choose leaderboard group"></select><p id="group-activation" class="hint"></p>
-        <div id="group-manage" hidden><p>Share a code to invite friends. Your steps upload once and count in every group you join. New memberships begin tomorrow.</p>
+        <div id="group-manage" hidden><p>Share a code to invite friends. Your latest steps count toward each active group when refreshed. New memberships begin tomorrow.</p>
           <div class="group-code"><span>Join code: <strong id="group-code"></strong></span><button id="copy-group-code" class="text-button" type="button">Copy</button></div>
           <button id="rotate-group-code" class="text-button" type="button" hidden>Regenerate code</button>
           <form id="create-group-form"><label for="new-group-name">Create a group</label><div class="form-row"><input id="new-group-name" placeholder="e.g. Office crew" minlength="2" maxlength="60" required><button type="submit" class="secondary">Create</button></div></form>
@@ -37,11 +37,13 @@
         </div><p id="group-message" class="message" role="status"></p>
       </section>
       <nav class="tabs" aria-label="Leaderboard period"><button data-period="day" class="active">Today</button><button data-period="week">Week</button><button data-period="month">Month</button></nav>
-      <div class="hero"><span>YOUR STEPS <span id="period-label">TODAY</span></span><strong id="my-steps">0</strong><small id="hero-note">Sync to join your crew</small><div class="arrow">↗</div></div>
-      <div class="sync-row"><div><strong>Health sync</strong><p id="sync-status" class="muted">Set up your iPhone Shortcut</p></div><span class="live-dot"></span></div>
-      <button class="primary sync-button" id="sync-now">↻ &nbsp; Sync now</button>
-      <p id="sync-hint" class="hint">Create the “Stride Sync” Shortcut below first. Return here after it runs.</p>
-      <section class="leaderboard"><div class="section-title"><h2>Leaderboard</h2><span class="wallet">🪙 <span id="coins">0</span> · <span id="points">0</span> pts</span></div><p class="muted" id="range"></p><div id="entries"></div><p id="board-message" class="message" role="status"></p></section>
+      <p id="range" class="period-range">Today · IST</p>
+      <div class="hero" aria-busy="false"><span>YOUR STEPS <span id="period-label">TODAY</span></span><strong id="my-steps">—</strong><small id="hero-note">Refresh to see your rank</small><div class="arrow" aria-hidden="true">↗</div></div>
+      <div class="sync-row"><div><strong>Apple Health · Shortcut</strong><p id="sync-status" class="muted" role="status">Set up your iPhone Shortcut</p></div><span id="sync-indicator" class="sync-indicator" aria-hidden="true">—</span></div>
+      <button class="primary sync-button" id="sync-now" type="button">↻ &nbsp; Sync today’s steps</button>
+      <button class="secondary refresh-button" id="refresh-board" type="button">Refresh standings</button>
+      <p id="sync-hint" class="hint">Safari’s Shortcut updates Today only. Use the native app to refresh full Week or Month totals.</p>
+      <section class="leaderboard"><div class="section-title"><h2>Leaderboard</h2></div><p class="muted">Latest totals from your crew</p><div id="entries" aria-busy="false"></div><p id="board-message" class="message" role="status"></p></section>
       <details class="setup" id="setup"><summary>Set up iPhone sync <span>↗</span></summary><div class="setup-body">
         <p>One time on your iPhone: make a Shortcut named <strong>Stride Sync</strong>. It reads your Health step samples and uploads today's total to your account.</p>
         <button id="create-token" class="secondary">Generate upload token</button><button id="revoke-token" class="text-button">Revoke token</button>
@@ -57,7 +59,8 @@
         <div class="automation"><strong>Automatic daily upload</strong><p>Shortcuts → Automation → + → Time of Day → Daily at <strong>11:45 PM IST</strong> → Run Immediately → Run Shortcut → Stride Sync. Keep the iPhone on and connected. iOS controls when the automation runs; check the board after the first night.</p></div>
         <p class="hint">If iPhone and Apple Watch both record steps, a raw sample sum can count overlapping samples. Check the first upload against Health; filter to your preferred source if totals differ. Uploaded totals replace earlier uploads for the same day. Days close at midnight IST; yesterday’s uploads are rejected. Safari uses Shortcut uploads; install the native app for full-period health refresh.</p>
       </div></details>
-      <footer><p>Day ranges end at midnight IST. Rankings use latest totals; daily rewards are paused.</p><button id="sign-out" class="text-button">Sign out</button></footer>
+      <details class="previous-rewards"><summary>Previous rewards · paused</summary><p><span id="coins">0</span> coins · <span id="points">0</span> points. Existing balances are preserved.</p></details>
+      <footer><p>Rankings use each member’s latest refresh.<br>Day ends at 00:00 IST.</p><button id="sign-out" class="text-button">Sign out</button></footer>
     </section>
   </main>
 </body>
